@@ -16,7 +16,12 @@
       "ES2022",
       "DOM",
       "DOM.Iterable"
-    ]
+    ],
+    "paths": {
+      "@/*": [
+        "./client/src/*"
+      ]
+    }
   },
   "include": [
     "server",
@@ -25,6 +30,7 @@
     "tests",
     "drizzle.config.ts",
     "vitest.config.ts",
-    "vite.config.ts"
+    "vite.config.ts",
+    "tailwind.config.ts"
   ]
 }

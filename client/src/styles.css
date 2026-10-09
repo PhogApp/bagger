@@ -1,59 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
-  --teal: #0cb9bb;
-  --teal-dark: #0a9698;
-  --ink: #111827;
-  --muted: #6b7280;
-  --line: #e5e7eb;
-  --bg: #f7f8fa;
+  --background: hsl(0, 0%, 100%);
+  --foreground: hsl(203, 30%, 16%);
+  --muted: hsl(220, 14%, 96%);
+  --muted-foreground: hsl(220, 9%, 43%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(222, 22%, 11%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(222, 22%, 11%);
+  --border: hsl(220, 13%, 91%);
+  --input: hsl(220, 13%, 87%);
+  --primary: #377890; /* Ocean Blue */
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(220, 14%, 96%);
+  --secondary-foreground: hsl(222, 22%, 11%);
+  --accent: hsl(220, 14%, 96%);
+  --accent-foreground: hsl(222, 22%, 11%);
+  --destructive: hsl(0, 72%, 46%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --ring: #439ba2; /* Teal */
+  --radius: 0.5rem;
 }
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: var(--ink);
-  background: var(--bg);
-}
-.center {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 24px;
-  padding: 16px;
-}
-.brand { font-size: 28px; font-weight: 600; letter-spacing: -0.01em; }
-.brand span { color: var(--teal); }
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 24px;
-  background: #fff;
-  border-bottom: 1px solid var(--line);
-}
-.topbar .right { display: flex; align-items: center; gap: 16px; }
-main { max-width: 720px; margin: 32px auto; padding: 0 16px; }
-.card {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 16px;
-}
-.card h2 { margin: 0 0 4px; font-size: 18px; }
-.card p { margin: 0; color: var(--muted); }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 24px; margin: 16px 0 0; }
-dt { color: var(--muted); }
-dd { margin: 0; font-weight: 500; }
-.error { color: #b91c1c; }
-.badge {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: #d1fae5;
-  color: #065f46;
-  font-size: 13px;
-  font-weight: 500;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1,
+  h2 {
+    @apply text-brand-deep;
+  }
 }

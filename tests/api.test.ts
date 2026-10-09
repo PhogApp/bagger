@@ -344,6 +344,25 @@ describe("building and running a sequence", () => {
     expect((await as(manager).post(`/api/tasks/${task.id}/complete`)).status).toBe(200);
   });
 
+  it("counts enrollments per sequence for the list screen", async () => {
+    const sequence = (await as(rep).post("/api/sequences", { name: "Counted" })).body;
+    await as(rep).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "One" });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const lead = (await as(rep).post("/api/leads", newLead())).body;
+      const res = await as(rep).post(`/api/sequences/${sequence.id}/enrollments`, {
+        leadId: lead.id,
+      });
+      ids.push(res.body.enrollment.id);
+    }
+    await as(rep).post(`/api/enrollments/${ids[0]}/pause`);
+    await as(rep).post(`/api/enrollments/${ids[1]}/stop`, { reason: "opted_out" });
+    const stats = (await as(rep).get("/api/sequences/stats")).body;
+    expect(stats[sequence.id]).toEqual({ total: 3, active: 1, paused: 1, ended: 1 });
+    const foreign = (await as(outsider).get("/api/sequences/stats")).body;
+    expect(foreign[sequence.id]).toBeUndefined();
+  });
+
   it("keeps a read-only user from enrolling anyone", async () => {
     const sequence = (await as(rep).post("/api/sequences", { name: "No enroll" })).body;
     await as(rep).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "One" });

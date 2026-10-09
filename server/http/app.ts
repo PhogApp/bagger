@@ -156,6 +156,11 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     res.json(rows);
   });
 
+  // Registered before the generic /sequences/:id route so "stats" is not read as an id.
+  api.get("/sequences/stats", async (req, res) => {
+    res.json(await seq.sequenceStats(db, actorOf(req)));
+  });
+
   crud(api, "/leads", db, leadService);
   crud(api, "/accounts", db, accountService);
   crud(api, "/contacts", db, contactService);

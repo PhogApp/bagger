@@ -19,10 +19,10 @@ Foundation slice. What exists today:
 
 | Sign-in | `server/auth/clerk.ts`, `server/auth/identity.ts` | Clerk session to Bagger user, organization and role; first sign-in creates them |
 | Server | `server/index.ts`, `server/db/` | Production entry point, database connection, migrations |
-| Web client | `client/` | Sign-in, organization picker, and a signed-in confirmation page |
+| Web client | `client/` | Sign-in, organization picker, app layout, and screens for Leads, Contacts, Accounts, Templates, Sequences (steps, people, enrolling) and Run Steps |
 | Hosting | `render.yaml` | Render Blueprint for the staging web service and database |
 
-Not built yet: the leads, contacts, accounts, templates, sequences and Run Steps screens.
+Not built yet: a dashboard, lead conversion, the opportunity pipeline, CSV import, reporting, admin settings, and billing. Messages are plain text; rich text is not yet supported.
 
 ## Sequence rules
 
@@ -46,6 +46,8 @@ npm run build        # build the web client and server into dist/
 ```
 
 To run locally, copy `.env.example` to `.env`, fill it in, then `npm run build && npm run db:migrate && npm start`. The server refuses to start without its Clerk keys, so it can never run with sign-in switched off.
+
+To look at the screens without Clerk or a database, run `npm run preview` and open http://localhost:4000. It uses an in-memory database with sample data; set `PREVIEW_AS=rep` to see them as a Rep. The preview server lives in `tests/` and is not part of the deployed build.
 
 ## Hosting
 
