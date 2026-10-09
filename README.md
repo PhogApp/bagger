@@ -14,7 +14,10 @@ Foundation slice. What exists today:
 | Audit history | `server/audit/history.ts` | Old value, new value, user, time per changed field |
 | Org setup | `server/orgs/provision.ts` | Creates an organization with settings, preset roles, and its first Admin |
 
-Not built yet: the web server, sign-in, and screens.
+| Record API | `server/records/`, `server/http/app.ts` | Leads, contacts, accounts, templates, sequences: permission-checked, org-scoped, audited |
+| Sequence API | `server/sequences/service.ts` | Steps, reorder, enroll, pause, stop, the Run Steps queue, per-person message edits |
+
+Not built yet: sign-in (Clerk), the production server entry point, hosting, and screens. The API takes an `Authenticator` function; tests supply a stand-in.
 
 ## Sequence rules
 
