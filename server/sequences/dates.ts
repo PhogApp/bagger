@@ -1,7 +1,7 @@
 /**
  * Due-date arithmetic for sequences.
  *
- * Dates are plain calendar dates ("YYYY-MM-DD") in the organization's time
+ * Dates are plain calendar dates ("YYYY-MM-DD") in the task owner's time
  * zone. Keeping them as dates, not instants, means "2 days later" can never
  * drift because of a server's clock or daylight saving.
  */
@@ -56,4 +56,14 @@ export function addWaitDays(start: string, waitDays: number, mode: WaitDayMode):
   }
   while (isWeekend(d)) d.setUTCDate(d.getUTCDate() + 1);
   return fromUtc(d);
+}
+
+/** Is this a time zone name the runtime understands, e.g. "America/Chicago"? */
+export function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
 }

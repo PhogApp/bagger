@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import path from "node:path";
 import express, {
   type NextFunction,
@@ -8,7 +8,7 @@ import express, {
   type Router,
 } from "express";
 import { z, ZodError } from "zod";
-import { fieldHistory, memberships, roles, users } from "../../shared/schema";
+import { fieldHistory, users } from "../../shared/schema";
 import type { Actor } from "../auth/actor";
 import { PermissionError, requireTool } from "../auth/permissions";
 import type { Db } from "../db/types";
@@ -22,6 +22,7 @@ import {
 } from "../records";
 import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
+import * as settings from "../settings/service";
 
 /**
  * Works out who is making a request. Production uses Clerk; tests pass a
@@ -141,19 +142,29 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     next();
   });
 
-  /** People in this organization, for owner pickers. */
+  // ---- settings, users and roles
+  api.get("/me/settings", async (req, res) => {
+    res.json(await settings.getMySettings(db, actorOf(req)));
+  });
+  api.patch("/me/settings", async (req, res) => {
+    res.json(await settings.updateMySettings(db, actorOf(req), req.body));
+  });
+  api.get("/settings", async (req, res) => {
+    res.json(await settings.getOrgSettings(db, actorOf(req)));
+  });
+  api.patch("/settings", async (req, res) => {
+    res.json(await settings.updateOrgSettings(db, actorOf(req), req.body));
+  });
+  /** People in this organization, for owner pickers and the users page. */
   api.get("/users", async (req, res) => {
-    const actor = actorOf(req);
-    const rows = await db
-      .select({ id: users.id, name: users.name, email: users.email, role: roles.name })
-      .from(memberships)
-      .innerJoin(users, eq(memberships.userId, users.id))
-      .innerJoin(roles, eq(memberships.roleId, roles.id))
-      .where(
-        and(eq(memberships.orgId, actor.orgId), inArray(memberships.status, ["active", "ending"])),
-      )
-      .orderBy(asc(users.name));
-    res.json(rows);
+    res.json(await settings.listUsers(db, actorOf(req)));
+  });
+  api.get("/roles", async (req, res) => {
+    res.json(await settings.listRoles(db, actorOf(req)));
+  });
+  api.put("/users/:id/role", async (req, res) => {
+    await settings.changeUserRole(db, actorOf(req), id(req), req.body);
+    res.status(204).end();
   });
 
   // Registered before the generic /sequences/:id route so "stats" is not read as an id.

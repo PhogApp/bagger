@@ -19,16 +19,17 @@ Foundation slice. What exists today:
 
 | Sign-in | `server/auth/clerk.ts`, `server/auth/identity.ts` | Clerk session to Bagger user, organization and role; first sign-in creates them |
 | Server | `server/index.ts`, `server/db/` | Production entry point, database connection, migrations |
-| Web client | `client/` | Sign-in, organization picker, app layout, and screens for Leads, Contacts, Accounts, Templates, Sequences (steps, people, enrolling) and Run Steps |
+| Web client | `client/` | Sign-in, organization picker, app layout, and screens for Leads, Contacts, Accounts, Templates, Sequences (steps, people, enrolling), Run Steps, and Settings (time zone, wait-day rule, users and roles) |
 | Hosting | `render.yaml` | Render Blueprint for the staging web service and database |
 
-Not built yet: a dashboard, lead conversion, the opportunity pipeline, CSV import, reporting, admin settings, and billing. Messages are plain text; rich text is not yet supported.
+Not built yet: a dashboard, lead conversion, the opportunity pipeline, CSV import, reporting, and billing. Messages are plain text; rich text is not yet supported.
 
 ## Sequence rules
 
 - An enrollment has one open task at a time. Later steps are not created ahead of time.
 - Wait days count from when the previous step was completed, not from when it was due.
-- Business days or calendar days is an organization setting.
+- Business days or calendar days is an organization setting, chosen by an admin.
+- Due dates follow the task owner's own time zone (their setting, else the organization default).
 - A linked template drives a step's content; a rep can edit the message for one person before sending.
 - Editing a sequence never rebuilds tasks. Each enrollment reads the current step order when it next advances.
 - A person can be in one sequence at a time.

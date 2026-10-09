@@ -11,6 +11,7 @@ import {
   sequences,
   stepTasks,
   templates,
+  users,
 } from "../../shared/schema";
 import type { Ctx, Db } from "../db/types";
 import { resolveContent, type MergePerson, type ResolvedContent } from "./content";
@@ -77,9 +78,25 @@ interface Clock {
 
 // ------------------------------------------------------------- helpers
 
-async function loadSettings(tx: Db, orgId: string): Promise<{ mode: WaitDayMode; tz: string }> {
-  const [row] = await tx.select().from(orgSettings).where(eq(orgSettings.orgId, orgId));
-  return { mode: row?.waitDayMode ?? "business", tz: row?.timezone ?? "America/Chicago" };
+/**
+ * The organization's wait-day mode, and the time zone that decides what
+ * "today" is for one user: their own if they set one, otherwise the
+ * organization's default. Due dates follow the person who owns the task.
+ */
+async function loadSettings(
+  tx: Db,
+  orgId: string,
+  userId: string,
+): Promise<{ mode: WaitDayMode; tz: string }> {
+  const [org] = await tx.select().from(orgSettings).where(eq(orgSettings.orgId, orgId));
+  const [user] = await tx
+    .select({ timezone: users.timezone })
+    .from(users)
+    .where(eq(users.id, userId));
+  return {
+    mode: org?.waitDayMode ?? "business",
+    tz: user?.timezone ?? org?.timezone ?? "America/Chicago",
+  };
 }
 
 interface Person extends MergePerson {
@@ -206,7 +223,7 @@ async function advance(
   fromStepId: string,
   at: Date,
 ): Promise<StepTask | null> {
-  const { mode, tz } = await loadSettings(tx, ctx.orgId);
+  const { mode, tz } = await loadSettings(tx, ctx.orgId, enrollment.ownerId);
   // Includes soft-deleted steps: we still need the position of a removed one.
   const [from] = await tx.select().from(sequenceSteps).where(eq(sequenceSteps.id, fromStepId));
   if (!from) throw new SequenceError("step_not_found");
@@ -288,8 +305,8 @@ export async function enroll(
     if (steps.length === 0) throw new SequenceError("sequence_has_no_steps");
     const first = steps[0];
 
-    const { mode, tz } = await loadSettings(tx, ctx.orgId);
     const ownerId = input.ownerId ?? ctx.userId;
+    const { mode, tz } = await loadSettings(tx, ctx.orgId, ownerId);
 
     const [enrollment] = await tx
       .insert(enrollments)
@@ -436,7 +453,7 @@ export async function resumeEnrollment(
   await db.transaction(async (tx) => {
     const enrollment = await lockEnrollment(tx, ctx, enrollmentId);
     if (enrollment.state !== "paused") throw new SequenceError("enrollment_not_paused");
-    const { mode, tz } = await loadSettings(tx, ctx.orgId);
+    const { mode, tz } = await loadSettings(tx, ctx.orgId, enrollment.ownerId);
     await tx
       .update(enrollments)
       .set({ state: "active", pausedAt: null })
@@ -678,7 +695,9 @@ export async function getDueTasks(
   ctx: Ctx,
   options: Clock & { ownerId?: string } = {},
 ): Promise<TaskView[]> {
-  const { tz } = await loadSettings(db, ctx.orgId);
+  // "Today" is the queue owner's today. When looking across everyone's
+  // queues, it is the viewer's.
+  const { tz } = await loadSettings(db, ctx.orgId, options.ownerId ?? ctx.userId);
   return loadTaskViews(db, ctx, {
     ownerId: options.ownerId,
     dueOnOrBefore: localDate(options.now ?? new Date(), tz),

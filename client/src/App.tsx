@@ -1,11 +1,14 @@
 import { Redirect, Route, Switch } from "wouter";
 import { AppLayout } from "./components/AppLayout";
-import { useMe } from "./lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useApi, useMe } from "./lib/api";
 import { AccountsPage } from "./pages/Accounts";
 import { ContactsPage } from "./pages/Contacts";
 import { LeadsPage } from "./pages/Leads";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
+import { browserTimeZone, SettingsPage } from "./pages/Settings";
 import { TemplatesPage } from "./pages/Templates";
 
 function Notice({ title, children }: { title: string; children: string }) {
@@ -17,8 +20,33 @@ function Notice({ title, children }: { title: string; children: string }) {
   );
 }
 
+/**
+ * The first time someone uses Bagger, remember their browser's time zone so
+ * due dates are right without any setup. They can change it under Settings.
+ */
+function useFirstVisitTimeZone(ready: boolean) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      const mine = await api<{ timezone: string | null }>("GET", "/api/me/settings");
+      if (cancelled || mine.timezone) return;
+      await api("PATCH", "/api/me/settings", { timezone: browserTimeZone() });
+      await queryClient.invalidateQueries({ queryKey: ["me", "settings"] });
+    })().catch(() => {
+      // Not worth interrupting anyone over; the organization default applies.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, api, queryClient]);
+}
+
 export function App() {
   const me = useMe();
+  useFirstVisitTimeZone(me.data?.billingStatus === "active");
 
   let page;
   if (me.isLoading) {
@@ -40,6 +68,7 @@ export function App() {
         <Route path="/templates" component={TemplatesPage} />
         <Route path="/sequences" component={SequencesPage} />
         <Route path="/sequences/:id" component={SequenceDetailPage} />
+        <Route path="/settings" component={SettingsPage} />
         <Route path="/">
           <Redirect to="/leads" />
         </Route>

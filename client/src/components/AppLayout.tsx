@@ -1,4 +1,12 @@
-import { Building2, FileText, ListOrdered, UserPlus, Users, type LucideIcon } from "lucide-react";
+import {
+  Building2,
+  FileText,
+  ListOrdered,
+  Settings,
+  UserPlus,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { useSession } from "@/lib/session";
@@ -12,6 +20,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/accounts", label: "Accounts", icon: Building2 },
   { href: "/templates", label: "Templates", icon: FileText },
   { href: "/sequences", label: "Sequences", icon: ListOrdered },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function AppLayout({ children }: { children: ReactNode }) {

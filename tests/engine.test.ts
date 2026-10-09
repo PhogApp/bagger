@@ -510,6 +510,60 @@ describe("the Run Steps queue", () => {
   });
 });
 
+describe("time zones", () => {
+  // 03:00 UTC on the 6th: still the evening of the 5th in Chicago,
+  // already midday on the 6th in Tokyo.
+  const instant = new Date("2026-10-06T03:00:00Z");
+
+  it("dates a task by its owner's own time zone", async () => {
+    const tokyoRep = await createUser(db, "Tokyo Rep");
+    await db.update(s.users).set({ timezone: "Asia/Tokyo" }).where(eq(s.users.id, tokyoRep));
+    const { sequence } = await createSequence(db, ctx, [{ waitDays: 0 }, { waitDays: 1 }]);
+    const a = await createLead(db, ctx);
+    const b = await createLead(db, ctx);
+
+    const chicago = await enroll(db, ctx, {
+      sequenceId: sequence.id,
+      person: { leadId: a.id },
+      now: instant,
+    });
+    const tokyo = await enroll(db, ctx, {
+      sequenceId: sequence.id,
+      person: { leadId: b.id },
+      ownerId: tokyoRep,
+      now: instant,
+    });
+    expect(chicago.task.dueOn).toBe("2026-10-05"); // organization default
+    expect(tokyo.task.dueOn).toBe("2026-10-06");
+
+    // The next step follows the owner too, even when someone else completes it.
+    const next = await completeTask(db, ctx, tokyo.task.id, { now: instant });
+    expect(next.nextTask?.dueOn).toBe("2026-10-07");
+  });
+
+  it("decides what is due today by the queue owner's time zone", async () => {
+    const tokyoRep = await createUser(db, "Tokyo Rep");
+    await db.update(s.users).set({ timezone: "Asia/Tokyo" }).where(eq(s.users.id, tokyoRep));
+    const { sequence } = await createSequence(db, ctx, [{ waitDays: 0 }]);
+    const mine = await createLead(db, ctx);
+    const theirs = await createLead(db, ctx);
+    const a = await enroll(db, ctx, { sequenceId: sequence.id, person: { leadId: mine.id } });
+    const b = await enroll(db, ctx, {
+      sequenceId: sequence.id,
+      person: { leadId: theirs.id },
+      ownerId: tokyoRep,
+    });
+    // Both tasks are dated the 6th.
+    await snoozeTask(db, ctx, a.task.id, "2026-10-06");
+    await snoozeTask(db, ctx, b.task.id, "2026-10-06");
+
+    const chicagoQueue = await getDueTasks(db, ctx, { ownerId: ctx.userId, now: instant });
+    const tokyoQueue = await getDueTasks(db, ctx, { ownerId: tokyoRep, now: instant });
+    expect(chicagoQueue).toHaveLength(0); // still the 5th here
+    expect(tokyoQueue).toHaveLength(1); // already the 6th there
+  });
+});
+
 describe("organizations are isolated", () => {
   it("one organization cannot see or act on another's sequences", async () => {
     const other = await createOrg(db);
