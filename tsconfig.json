@@ -8,7 +8,23 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ]
   },
-  "include": ["server", "shared", "tests", "drizzle.config.ts", "vitest.config.ts"]
+  "include": [
+    "server",
+    "shared",
+    "client/src",
+    "tests",
+    "drizzle.config.ts",
+    "vitest.config.ts",
+    "vite.config.ts"
+  ]
 }

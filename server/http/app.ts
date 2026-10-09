@@ -1,5 +1,12 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import express, { type NextFunction, type Request, type Response, type Router } from "express";
+import path from "node:path";
+import express, {
+  type NextFunction,
+  type Request,
+  type RequestHandler,
+  type Response,
+  type Router,
+} from "express";
 import { z, ZodError } from "zod";
 import { fieldHistory, memberships, roles, users } from "../../shared/schema";
 import type { Actor } from "../auth/actor";
@@ -75,14 +82,29 @@ function crud(router: Router, path: string, db: Db, service: CrudService) {
   }) satisfies Handler);
 }
 
-export function createApp(db: Db, authenticate: Authenticator) {
+export interface AppOptions {
+  /** Middleware that must run first, e.g. the Clerk session reader. */
+  before?: RequestHandler[];
+  /** Non-secret settings the browser needs before anyone is signed in. */
+  publicConfig?: Record<string, string>;
+  /** Folder holding the built web client. Omitted in tests. */
+  staticDir?: string;
+}
+
+export function createApp(db: Db, authenticate: Authenticator, options: AppOptions = {}) {
   const app = express();
   app.disable("x-powered-by");
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
   });
+  app.get("/api/config", (_req, res) => {
+    res.json(options.publicConfig ?? {});
+  });
+
+  for (const handler of options.before ?? []) app.use(handler);
 
   const api = express.Router();
 
@@ -235,6 +257,15 @@ export function createApp(db: Db, authenticate: Authenticator) {
   });
 
   app.use("/api", api);
+
+  if (options.staticDir) {
+    const staticDir = options.staticDir;
+    app.use(express.static(staticDir, { index: false, maxAge: "1h" }));
+    // Any other page request gets the web app, which does its own routing.
+    app.get("/{*path}", (_req, res) => {
+      res.sendFile(path.join(staticDir, "index.html"));
+    });
+  }
 
   // Express 5 forwards rejected promises from async handlers to this.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
