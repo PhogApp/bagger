@@ -120,3 +120,18 @@ export async function createSequence(db: Db, ctx: Ctx, steps: StepSpec[]) {
 
 /** 10:00 in Chicago on the given date. */
 export const at = (day: string) => new Date(`${day}T15:00:00Z`);
+
+/** Add a user to an organization with one of the preset roles. */
+export async function addMember(
+  db: Db,
+  orgId: string,
+  preset: "admin" | "manager" | "rep" | "read_only",
+  name: string = preset,
+): Promise<Ctx> {
+  const userId = await createUser(db, name);
+  const roles = await db.select().from(schema.roles).where(eq(schema.roles.orgId, orgId));
+  const role = roles.find((r) => r.presetKey === preset);
+  if (!role) throw new Error(`preset role ${preset} missing`);
+  await db.insert(schema.memberships).values({ orgId, userId, roleId: role.id });
+  return { orgId, userId };
+}

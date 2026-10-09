@@ -10,5 +10,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["server", "shared", "tests", "drizzle.config.ts"]
+  "include": ["server", "shared", "tests", "drizzle.config.ts", "vitest.config.ts"]
 }
