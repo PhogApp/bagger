@@ -1,0 +1,37 @@
+# Render Blueprint: the staging environment.
+# Render reads this file and creates or updates what it describes.
+
+databases:
+  - name: bagger-staging-db
+    plan: 0.1c-256mb
+    region: ohio
+    postgresMajorVersion: "17"
+    databaseName: bagger
+    user: bagger
+
+services:
+  - type: web
+    name: bagger-staging
+    runtime: node
+    plan: 0.5c-512mb
+    region: ohio
+    branch: main
+    # Deploy only after the automated tests pass on GitHub.
+    autoDeployTrigger: checksPass
+    buildCommand: npm ci --include=dev && npm run build
+    # Apply database changes before the new version starts taking traffic.
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bagger-staging-db
+          property: connectionString
+      # Entered once in the Render dashboard; never stored in this repository.
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false

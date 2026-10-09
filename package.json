@@ -7,14 +7,23 @@
     "node": ">=20"
   },
   "scripts": {
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build && esbuild server/index.ts server/db/migrate.ts --bundle --platform=node --format=esm --packages=external --outdir=dist",
+    "start": "node dist/index.js",
+    "db:migrate": "node dist/db/migrate.js",
+    "db:generate": "drizzle-kit generate",
     "check": "tsc --noEmit",
-    "test": "vitest run",
-    "db:generate": "drizzle-kit generate"
+    "test": "vitest run"
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.61.10",
+    "@clerk/express": "^2.1.77",
     "drizzle-orm": "^0.45.4",
     "express": "^5.2.1",
     "pg": "^8.23.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -22,10 +31,16 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.4",
     "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/supertest": "^7.2.1",
+    "@vitejs/plugin-react": "^6.1.2",
     "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.28.2",
     "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
+    "vite": "^8.3.4",
     "vitest": "^5.0.3"
   }
 }
