@@ -21,6 +21,16 @@ const optionalText = z
   .transform((v) => (v === "" ? null : v))
   .nullable()
   .optional();
+/**
+ * Web addresses as people type them. "www.example.com" is accepted and
+ * stored as "https://www.example.com" so it works as a link.
+ */
+const optionalUrl = z
+  .string()
+  .trim()
+  .transform((v) => (v === "" ? null : /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`))
+  .nullable()
+  .optional();
 const email = z.email().trim().toLowerCase();
 const ownerId = z.uuid().optional();
 
@@ -35,7 +45,7 @@ const personFields = {
   cellPhone: optionalText,
   directPhone: optionalText,
   hqPhone: optionalText,
-  linkedin: optionalText,
+  linkedin: optionalUrl,
   notes: optionalText,
   status: z.enum(personStatusEnum.enumValues).optional(),
   ownerId,
@@ -45,8 +55,8 @@ export const leadInput = z.object({ ...personFields, company: optionalText });
 export const contactInput = z.object({ ...personFields, accountId: z.uuid() });
 export const accountInput = z.object({
   name: text,
-  website: optionalText,
-  linkedin: optionalText,
+  website: optionalUrl,
+  linkedin: optionalUrl,
   hqPhone: optionalText,
   notes: optionalText,
   status: z.enum(accountStatusEnum.enumValues).optional(),
