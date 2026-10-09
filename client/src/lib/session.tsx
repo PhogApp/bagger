@@ -8,6 +8,8 @@ import { createContext, useContext, type ReactNode } from "react";
 export interface Session {
   authHeaders: () => Promise<Record<string, string>>;
   orgName: string;
+  /** Opens the screen for inviting and removing people, when sign-in provides one. */
+  manageMembers?: () => void;
   /** Rendered at the right of the top bar: account menu, organization switcher. */
   accountControls: ReactNode;
 }

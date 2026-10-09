@@ -10,7 +10,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { UserPlus } from "lucide-react";
 import { canUse, useApi, useMe, type OrgUser } from "@/lib/api";
+import { useSession } from "@/lib/session";
 
 interface MySettings {
   timezone: string | null;
@@ -245,6 +247,7 @@ function UsersSection({ canManage }: { canManage: boolean }) {
   });
   const roles = useQuery({ queryKey: ["roles"], queryFn: () => api<Role[]>("GET", "/api/roles") });
   const [error, setError] = useState<string | null>(null);
+  const { manageMembers } = useSession();
 
   const change = useMutation({
     mutationFn: ({ userId, roleId }: { userId: string; roleId: string }) =>
@@ -262,10 +265,18 @@ function UsersSection({ canManage }: { canManage: boolean }) {
       title="Users and roles"
       description={
         canManage
-          ? "Invite people from the organization menu in the top bar. New people join as a Rep; change their role here."
+          ? "New people join as a Rep. Change their role here."
           : "The people in your organization."
       }
     >
+      {canManage && manageMembers && (
+        <div className="mb-4">
+          <Button variant="outline" onClick={manageMembers}>
+            <UserPlus className="mr-2 h-4 w-4" aria-hidden />
+            Invite or remove people
+          </Button>
+        </div>
+      )}
       {error && (
         <p role="alert" className="mb-3 text-sm text-destructive">
           {error}

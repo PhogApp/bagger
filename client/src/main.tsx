@@ -6,6 +6,7 @@ import {
   SignedOut,
   SignIn,
   useAuth,
+  useClerk,
   useOrganization,
   UserButton,
 } from "@clerk/clerk-react";
@@ -25,6 +26,17 @@ interface Config {
   devOrgName?: string;
   devUserName?: string;
 }
+
+/** Makes Clerk's sign-in and account screens match Bagger's palette and type. */
+const CLERK_APPEARANCE = {
+  variables: {
+    colorPrimary: "#377890", // Ocean Blue: buttons and links
+    colorText: "#284B5E", // Deep Aerospace Blue
+    colorDanger: "#b4443f",
+    borderRadius: "0.5rem",
+    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+  },
+};
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -46,6 +58,7 @@ function WithQueries({ scope, children }: { scope: string; children: ReactNode }
 
 function ClerkSession() {
   const { getToken } = useAuth();
+  const clerk = useClerk();
   const { organization, isLoaded } = useOrganization();
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getToken();
@@ -60,6 +73,7 @@ function ClerkSession() {
         <Brand large />
         <OrganizationList
           hidePersonal
+          hideSlug
           afterCreateOrganizationUrl="/"
           afterSelectOrganizationUrl="/"
         />
@@ -69,9 +83,21 @@ function ClerkSession() {
   const session: Session = {
     authHeaders,
     orgName: organization.name,
+    manageMembers: () => clerk.openOrganizationProfile(),
     accountControls: (
       <>
-        <OrganizationSwitcher hidePersonal afterSelectOrganizationUrl="/" />
+        <OrganizationSwitcher
+          hidePersonal
+          hideSlug
+          afterSelectOrganizationUrl="/"
+          appearance={{
+            elements: {
+              // A signed-in user already has an organization. Starting another
+              // one from here would create a separate, separately billed customer.
+              organizationSwitcherPopoverActionButton__createOrganization: { display: "none" },
+            },
+          }}
+        />
         <UserButton />
       </>
     ),
@@ -122,7 +148,11 @@ function Root() {
   if (!config) return <Centered>Loading…</Centered>;
   if (config.devUser) return <PreviewSession config={config} />;
   return (
-    <ClerkProvider publishableKey={config.clerkPublishableKey!} afterSignOutUrl="/">
+    <ClerkProvider
+      publishableKey={config.clerkPublishableKey!}
+      afterSignOutUrl="/"
+      appearance={CLERK_APPEARANCE}
+    >
       <SignedOut>
         <Centered>
           <Brand large />
