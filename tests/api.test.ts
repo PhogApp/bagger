@@ -392,6 +392,107 @@ describe("building and running a sequence", () => {
   });
 });
 
+describe("settings", () => {
+  it("lets each user choose their own time zone", async () => {
+    const before = (await as(rep).get("/api/me/settings")).body;
+    expect(before).toEqual({
+      timezone: null,
+      effectiveTimezone: "America/Chicago",
+      organizationDefault: "America/Chicago",
+    });
+    const saved = await as(rep).patch("/api/me/settings", { timezone: "America/New_York" });
+    expect(saved.body.effectiveTimezone).toBe("America/New_York");
+    // One user's choice does not change anyone else's.
+    expect((await as(rep2).get("/api/me/settings")).body.effectiveTimezone).toBe(
+      "America/Chicago",
+    );
+    const bad = await as(rep).patch("/api/me/settings", { timezone: "Mars/Olympus" });
+    expect(bad.status).toBe(400);
+    // Clearing it goes back to the organization default.
+    const cleared = await as(rep).patch("/api/me/settings", { timezone: null });
+    expect(cleared.body.effectiveTimezone).toBe("America/Chicago");
+  });
+
+  it("lets only an admin change the organization's wait-day rule", async () => {
+    const org = await createOrg(db);
+    const member = await addMember(db, org.orgId, "manager");
+    expect((await as(member).get("/api/settings")).body.waitDayMode).toBe("business");
+    expect((await as(member).patch("/api/settings", { waitDayMode: "calendar" })).status).toBe(
+      403,
+    );
+    const changed = await as(org).patch("/api/settings", { waitDayMode: "calendar" });
+    expect(changed.status).toBe(200);
+    expect(changed.body.waitDayMode).toBe("calendar");
+    expect((await as(member).get("/api/settings")).body.waitDayMode).toBe("calendar");
+    expect((await as(org).patch("/api/settings", { waitDayMode: "weekly" })).status).toBe(400);
+
+    const history = (await as(org).get(`/api/history/org_settings/${org.orgId}`)).body;
+    expect(history[0]).toMatchObject({
+      field: "waitDayMode",
+      oldValue: "business",
+      newValue: "calendar",
+    });
+    // Other organizations are untouched.
+    expect((await as(rep).get("/api/settings")).body.waitDayMode).toBe("business");
+  });
+});
+
+describe("users and roles", () => {
+  it("lets an admin change a user's role, and nobody else", async () => {
+    const temp = await addMember(db, admin.orgId, "rep", "Temp Person");
+    const roles = (await as(admin).get("/api/roles")).body;
+    expect(roles.map((r: { name: string }) => r.name)).toEqual([
+      "Admin",
+      "Manager",
+      "Rep",
+      "Read-only",
+    ]);
+    const managerRole = roles.find((r: { name: string }) => r.name === "Manager");
+
+    const denied = await as(manager).put(`/api/users/${temp.userId}/role`, {
+      roleId: managerRole.id,
+    });
+    expect(denied.status).toBe(403);
+
+    const ok = await as(admin).put(`/api/users/${temp.userId}/role`, { roleId: managerRole.id });
+    expect(ok.status).toBe(204);
+    expect((await as(temp).get("/api/me")).body.role).toBe("Manager");
+    const listed = (await as(admin).get("/api/users")).body;
+    expect(listed.find((u: { id: string }) => u.id === temp.userId).role).toBe("Manager");
+  });
+
+  it("never leaves an organization without an Admin", async () => {
+    const org = await createOrg(db);
+    const other = await addMember(db, org.orgId, "rep");
+    const roles = (await as(org).get("/api/roles")).body;
+    const repRole = roles.find((r: { name: string }) => r.name === "Rep");
+    const adminRole = roles.find((r: { name: string }) => r.name === "Admin");
+
+    const refused = await as(org).put(`/api/users/${org.userId}/role`, { roleId: repRole.id });
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toMatch(/only Admin/);
+
+    // With a second Admin in place, the first can step down.
+    await as(org).put(`/api/users/${other.userId}/role`, { roleId: adminRole.id });
+    const allowed = await as(org).put(`/api/users/${org.userId}/role`, { roleId: repRole.id });
+    expect(allowed.status).toBe(204);
+    expect((await as(org).get("/api/me")).body.role).toBe("Rep");
+  });
+
+  it("cannot reach users or roles in another organization", async () => {
+    const roles = (await as(admin).get("/api/roles")).body;
+    const foreignRoles = (await as(outsider).get("/api/roles")).body;
+    const cross = await as(admin).put(`/api/users/${outsider.userId}/role`, {
+      roleId: roles[1].id,
+    });
+    expect(cross.status).toBe(404);
+    const wrongRole = await as(admin).put(`/api/users/${rep.userId}/role`, {
+      roleId: foreignRoles[1].id,
+    });
+    expect(wrongRole.status).toBe(400);
+  });
+});
+
 describe("a locked account", () => {
   it("can still see who it is, and nothing else", async () => {
     const locked = await createOrg(db);

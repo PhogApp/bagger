@@ -92,6 +92,8 @@ export const users = pgTable("users", {
   clerkUserId: text("clerk_user_id").unique(),
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
+  /** The user's own IANA time zone. Null until set; the org default applies. */
+  timezone: text("timezone"),
   createdAt: createdAt(),
 });
 
@@ -100,7 +102,7 @@ export const orgSettings = pgTable("org_settings", {
     .primaryKey()
     .references(() => organizations.id, { onDelete: "cascade" }),
   waitDayMode: waitDayModeEnum("wait_day_mode").notNull().default("business"),
-  /** IANA time zone used to decide what "today" is for due dates. */
+  /** Default IANA time zone for users who have not chosen their own. */
   timezone: text("timezone").notNull().default("America/Chicago"),
   postalAddress: text("postal_address"),
   updatedAt: updatedAt(),
@@ -380,7 +382,7 @@ export const stepTasks = pgTable(
       .notNull()
       .references(() => users.id),
     state: stepTaskStateEnum("state").notNull().default("open"),
-    /** Calendar date in the organization's time zone. */
+    /** Calendar date in the task owner's time zone. */
     dueOn: date("due_on").notNull(),
     /** The rep's edit for this one person; wins over the template. */
     overrideSubject: text("override_subject"),
