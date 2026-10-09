@@ -57,7 +57,7 @@ function ClerkSession() {
   if (!organization) {
     return (
       <Centered>
-        <Brand />
+        <Brand large />
         <OrganizationList
           hidePersonal
           afterCreateOrganizationUrl="/"
@@ -125,7 +125,7 @@ function Root() {
     <ClerkProvider publishableKey={config.clerkPublishableKey!} afterSignOutUrl="/">
       <SignedOut>
         <Centered>
-          <Brand />
+          <Brand large />
           <SignIn routing="hash" />
         </Centered>
       </SignedOut>

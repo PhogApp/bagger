@@ -45,6 +45,12 @@ export interface Field {
   placeholder?: string;
   /** Columns out of 6 the field spans in the form. Defaults to 3 (half width). */
   span?: 2 | 3 | 6;
+  /** Height of a textarea, in lines. */
+  rows?: number;
+  /** Short guidance shown under the field. */
+  help?: string;
+  /** Converts the form's text value before sending, e.g. "true" to true. */
+  parse?: (value: string) => unknown;
 }
 
 export interface Column<T> {
@@ -58,7 +64,7 @@ interface BaseRecord {
 }
 
 export interface RecordPageProps<T extends BaseRecord> {
-  object: "leads" | "contacts" | "accounts";
+  object: "leads" | "contacts" | "accounts" | "templates" | "sequences";
   /** Name used by audit history, e.g. "lead". */
   recordType: string;
   title: string;
@@ -70,6 +76,8 @@ export interface RecordPageProps<T extends BaseRecord> {
   defaults?: Record<string, string>;
   /** Heading for the edit dialog. */
   describe: (row: T) => string;
+  /** When set, clicking a row calls this instead of opening the edit dialog. */
+  onRowOpen?: (row: T) => void;
 }
 
 interface HistoryEntry {
@@ -125,7 +133,7 @@ function FieldInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
-          rows={3}
+          rows={field.rows ?? 3}
         />
       ) : field.kind === "select" ? (
         <select
@@ -154,6 +162,7 @@ function FieldInput({
           placeholder={field.placeholder}
         />
       )}
+      {field.help && <p className="text-xs text-muted-foreground">{field.help}</p>}
     </div>
   );
 }
@@ -246,9 +255,19 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
     setEditing(target);
   }
 
+  const parsed = (body: Record<string, string>) =>
+    Object.fromEntries(
+      Object.entries(body).map(([name, v]) => {
+        const parse = fields.find((f) => f.name === name)?.parse;
+        return [name, parse ? parse(v) : v];
+      }),
+    );
+
   // The server reports problems by field name; show the label people see.
   const relabel = (message: string) =>
     fields.reduce((text, f) => text.replace(`${f.name}:`, `${f.label}:`), message);
+
+  const openRow = (row: T) => (props.onRowOpen ? props.onRowOpen(row) : open(row));
 
   const done = async () => {
     await queryClient.invalidateQueries({ queryKey: [object] });
@@ -260,14 +279,14 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       if (editing === "new") {
         // Leave out blanks so the server applies its defaults.
         const body = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== ""));
-        return api("POST", `/api/${object}`, body);
+        return api("POST", `/api/${object}`, parsed(body));
       }
       const row = editing as unknown as Record<string, unknown>;
       const changed = Object.fromEntries(
         Object.entries(values).filter(([name, v]) => v !== String(row[name] ?? "")),
       );
       if (Object.keys(changed).length === 0) return null;
-      return api("PATCH", `/api/${object}/${(editing as T).id}`, changed);
+      return api("PATCH", `/api/${object}/${(editing as T).id}`, parsed(changed));
     },
     onSuccess: done,
     onError: (e: Error) => setFormError(relabel(e.message)),
@@ -367,9 +386,9 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                     key={row.id}
                     className="cursor-pointer"
                     tabIndex={0}
-                    onClick={() => open(row)}
+                    onClick={() => openRow(row)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") open(row);
+                      if (e.key === "Enter") openRow(row);
                     }}
                   >
                     {props.columns.map((c) => (

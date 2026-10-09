@@ -26,6 +26,15 @@ export default {
         border: "var(--border)",
         input: "var(--input)",
         ring: "var(--ring)",
+        // Bagger brand palette.
+        brand: {
+          deep: "#284B5E", // logo, headings, sidebar
+          ocean: "#377890", // buttons, active navigation
+          teal: "#439BA2", // accents, success
+          sage: "#7AA39B", // subtle secondary accents
+          mauve: "#9A8693", // muted accent
+          rose: "#CA8E8F", // supporting color
+        },
       },
     },
   },

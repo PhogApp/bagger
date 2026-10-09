@@ -1,14 +1,17 @@
-import { Building2, UserPlus, Users, type LucideIcon } from "lucide-react";
+import { Building2, FileText, ListOrdered, UserPlus, Users, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { Brand } from "./Brand";
+import { RunStepsButton } from "./RunSteps";
 
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/leads", label: "Leads", icon: UserPlus },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/accounts", label: "Accounts", icon: Building2 },
+  { href: "/templates", label: "Templates", icon: FileText },
+  { href: "/sequences", label: "Sequences", icon: ListOrdered },
 ];
 
 export function AppLayout({ children }: { children: ReactNode }) {
@@ -18,10 +21,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen flex-col">
       <header className="flex h-16 shrink-0 items-center justify-between border-b px-6">
         <Brand />
-        <div className="flex items-center gap-4">{accountControls}</div>
+        <div className="flex items-center gap-4">
+          <RunStepsButton />
+          {accountControls}
+        </div>
       </header>
       <div className="flex flex-1">
-        <nav className="w-56 shrink-0 border-r p-3" aria-label="Main">
+        <nav className="w-56 shrink-0 bg-brand-deep p-3" aria-label="Main">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = location === href || location.startsWith(`${href}/`);
             return (
@@ -31,8 +37,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm",
                   active
-                    ? "bg-muted font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ? "bg-brand-ocean font-medium text-white"
+                    : "text-white/75 hover:bg-white/10 hover:text-white",
                 )}
               >
                 <Icon className="h-4 w-4" aria-hidden />

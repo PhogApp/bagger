@@ -11,7 +11,15 @@
 import path from "node:path";
 import { resolveActor } from "../server/auth/actor";
 import { createApp } from "../server/http/app";
-import { accountService, contactService, leadService } from "../server/records";
+import {
+  accountService,
+  contactService,
+  leadService,
+  sequenceService,
+  templateService,
+} from "../server/records";
+import { localDate } from "../server/sequences/dates";
+import * as seq from "../server/sequences/service";
 import { addMember, createOrg, createTestDb } from "./helpers";
 
 const db = await createTestDb();
@@ -53,6 +61,55 @@ for (const [i, [firstName, lastName, title, company, cellPhone]] of people.entri
   if (lastName === "Rude") {
     await leadService.update(db, rep, lead.id, { title: "Chief Financial Officer" });
     await leadService.update(db, admin, lead.id, { status: "Prospecting", ownerId: rep.userId });
+  }
+}
+
+const intro = await templateService.create(db, admin, {
+  name: "Improve your business with NetSuite",
+  type: "email",
+  subject: "Improve your business, {firstName}",
+  body: "Hi {firstName},\n\nI work with finance teams like the one at {company} that have outgrown their accounting system.\n\nWould a 15-minute call next week be worth it?\n\nBest,\nPeter",
+});
+const connect = await templateService.create(db, admin, {
+  name: "LinkedIn Connection",
+  type: "linkedin",
+  body: "Hi {firstName}, I work with teams like {company} on NetSuite. Would be glad to connect.",
+});
+const outbound = await sequenceService.create(db, admin, {
+  name: "NetSuite Outbound Sequence V1",
+  description: "Connect, email, call",
+});
+await seq.addStep(db, admin, outbound.id, {
+  type: "linkedin_connect",
+  title: "LinkedIn Connect",
+  templateId: connect.id,
+});
+await seq.addStep(db, admin, outbound.id, {
+  type: "email",
+  title: "Intro email",
+  waitDays: 1,
+  templateId: intro.id,
+});
+await seq.addStep(db, admin, outbound.id, {
+  type: "phone_call",
+  title: "Phone Call",
+  waitDays: 2,
+  callObjectives: "Confirm they own the ERP decision",
+  callScript: "Ask how month-end close went last quarter.",
+});
+// Give both preview users something in their Run Steps queue.
+const enrolled = await leadService.list(db, admin, {});
+for (const lead of enrolled.slice(0, 4)) {
+  const owner = lead.ownerId === rep.userId ? rep : admin;
+  const { task } = await seq.enrollPerson(db, owner, outbound.id, { leadId: lead.id });
+  if (lead.lastName === "Nichols" || lead.lastName === "Russell") {
+    // Move on to the email step and make it due today, so the queue has an email in it.
+    const { nextTask } = await seq.complete(db, owner, task.id, {});
+    if (nextTask) {
+      await seq.snooze(db, owner, nextTask.id, {
+        dueOn: localDate(new Date(), "America/Chicago"),
+      });
+    }
   }
 }
 

@@ -18,6 +18,15 @@ const MESSAGES: Record<string, string> = {
   invalid_input: "Some of the information entered isn't valid.",
   account_locked: "This account is locked. Ask your admin to update billing.",
   not_signed_in: "Your session has ended. Please sign in again.",
+  already_enrolled: "This person is already in a sequence. End that one first.",
+  do_not_contact: "This person is marked Do Not Contact.",
+  sequence_has_no_steps: "Add at least one step before enrolling anyone.",
+  sequence_inactive: "This sequence is inactive. Set it to Active to enroll people.",
+  person_converted: "This lead was converted to a contact. Enroll the contact instead.",
+  task_not_open: "This step was already completed or skipped.",
+  enrollment_not_active: "This person's sequence is paused. Resume it first.",
+  enrollment_ended: "This person's sequence has already ended.",
+  invalid_date: "Pick a valid date.",
 };
 
 function describe(body: {
@@ -99,4 +108,9 @@ export function permissionsFor(me: Me | undefined, object: ObjectName) {
     canDelete: (ownerId: string) => allows("delete", ownerId),
     canViewHistory: perms["history.view"] === true,
   };
+}
+
+/** On/off permissions that are not tied to one record. */
+export function canUse(me: Me | undefined, tool: string): boolean {
+  return me?.permissions[tool] === true;
 }

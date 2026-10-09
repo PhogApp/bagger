@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, max } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, max } from "drizzle-orm";
 import { z } from "zod";
 import {
   contacts,
@@ -91,6 +91,32 @@ async function checkTemplate(
   if (template.type !== TEMPLATE_TYPE_FOR_STEP[type]) {
     throw new ValidationError(`A ${type} step cannot use a ${template.type} template`);
   }
+}
+
+// ------------------------------------------------------------ overview
+
+/** Enrollment counts per sequence, for the Sequences list. */
+export async function sequenceStats(db: Db, actor: Actor) {
+  if (scopeFor(actor.permissions, "sequences", "view") === "none") {
+    throw new PermissionError("sequences.view");
+  }
+  const rows = await db
+    .select({
+      sequenceId: enrollments.sequenceId,
+      state: enrollments.state,
+      count: count(),
+    })
+    .from(enrollments)
+    .where(eq(enrollments.orgId, actor.orgId))
+    .groupBy(enrollments.sequenceId, enrollments.state);
+  const stats: Record<string, { total: number; active: number; paused: number; ended: number }> =
+    {};
+  for (const row of rows) {
+    const entry = (stats[row.sequenceId] ??= { total: 0, active: 0, paused: 0, ended: 0 });
+    entry[row.state] += row.count;
+    entry.total += row.count;
+  }
+  return stats;
 }
 
 // --------------------------------------------------------------- steps

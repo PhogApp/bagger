@@ -4,7 +4,7 @@
 
 :root {
   --background: hsl(0, 0%, 100%);
-  --foreground: hsl(222, 22%, 11%);
+  --foreground: hsl(203, 30%, 16%);
   --muted: hsl(220, 14%, 96%);
   --muted-foreground: hsl(220, 9%, 43%);
   --popover: hsl(0, 0%, 100%);
@@ -13,7 +13,7 @@
   --card-foreground: hsl(222, 22%, 11%);
   --border: hsl(220, 13%, 91%);
   --input: hsl(220, 13%, 87%);
-  --primary: hsl(182, 80%, 34%);
+  --primary: #377890; /* Ocean Blue */
   --primary-foreground: hsl(0, 0%, 100%);
   --secondary: hsl(220, 14%, 96%);
   --secondary-foreground: hsl(222, 22%, 11%);
@@ -21,7 +21,7 @@
   --accent-foreground: hsl(222, 22%, 11%);
   --destructive: hsl(0, 72%, 46%);
   --destructive-foreground: hsl(0, 0%, 100%);
-  --ring: hsl(182, 60%, 60%);
+  --ring: #439ba2; /* Teal */
   --radius: 0.5rem;
 }
 
@@ -32,5 +32,9 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1,
+  h2 {
+    @apply text-brand-deep;
   }
 }

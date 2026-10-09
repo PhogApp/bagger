@@ -4,6 +4,9 @@ import { useMe } from "./lib/api";
 import { AccountsPage } from "./pages/Accounts";
 import { ContactsPage } from "./pages/Contacts";
 import { LeadsPage } from "./pages/Leads";
+import { SequenceDetailPage } from "./pages/SequenceDetail";
+import { SequencesPage } from "./pages/Sequences";
+import { TemplatesPage } from "./pages/Templates";
 
 function Notice({ title, children }: { title: string; children: string }) {
   return (
@@ -34,6 +37,9 @@ export function App() {
         <Route path="/leads" component={LeadsPage} />
         <Route path="/contacts" component={ContactsPage} />
         <Route path="/accounts" component={AccountsPage} />
+        <Route path="/templates" component={TemplatesPage} />
+        <Route path="/sequences" component={SequencesPage} />
+        <Route path="/sequences/:id" component={SequenceDetailPage} />
         <Route path="/">
           <Redirect to="/leads" />
         </Route>

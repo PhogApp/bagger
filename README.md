@@ -19,10 +19,10 @@ Foundation slice. What exists today:
 
 | Sign-in | `server/auth/clerk.ts`, `server/auth/identity.ts` | Clerk session to Bagger user, organization and role; first sign-in creates them |
 | Server | `server/index.ts`, `server/db/` | Production entry point, database connection, migrations |
-| Web client | `client/` | Sign-in, organization picker, app layout, and the Leads, Contacts and Accounts screens with search, add, edit, delete and History |
+| Web client | `client/` | Sign-in, organization picker, app layout, and screens for Leads, Contacts, Accounts, Templates, Sequences (steps, people, enrolling) and Run Steps |
 | Hosting | `render.yaml` | Render Blueprint for the staging web service and database |
 
-Not built yet: the Templates, Sequences and Run Steps screens.
+Not built yet: a dashboard, lead conversion, the opportunity pipeline, CSV import, reporting, admin settings, and billing. Messages are plain text; rich text is not yet supported.
 
 ## Sequence rules
 

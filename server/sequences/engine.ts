@@ -568,7 +568,14 @@ export interface TaskView {
   dueOn: string;
   state: StepTask["state"];
   step: { id: string; type: Step["type"]; title: string; position: number };
-  person: MergePerson & { leadId: string | null; contactId: string | null };
+  person: MergePerson & {
+    leadId: string | null;
+    contactId: string | null;
+    cellPhone: string | null;
+    directPhone: string | null;
+    hqPhone: string | null;
+    linkedin: string | null;
+  };
   callScript: string | null;
   callObjectives: string | null;
   content: ResolvedContent;
@@ -643,6 +650,10 @@ async function loadTaskViews(
         ...person,
         leadId: r.enrollment.leadId,
         contactId: r.enrollment.contactId,
+        cellPhone: source.cellPhone,
+        directPhone: source.directPhone,
+        hqPhone: source.hqPhone,
+        linkedin: source.linkedin,
       },
       callScript: r.step.callScript,
       callObjectives: r.step.callObjectives,
