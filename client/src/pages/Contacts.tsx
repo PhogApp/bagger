@@ -68,7 +68,7 @@ export function ContactsPage() {
       span: 2,
     },
     { name: "hqPhone", label: "HQ Phone", kind: "tel", placeholder: "(555) 123-4567", span: 2 },
-    { name: "linkedin", label: "LinkedIn", kind: "url", placeholder: "https://linkedin.com/in/…" },
+    { name: "linkedin", label: "LinkedIn", kind: "url", placeholder: "linkedin.com/in/…" },
     {
       name: "status",
       label: "Status",

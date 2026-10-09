@@ -158,6 +158,24 @@ describe("accounts and contacts", () => {
     expect(ok.status).toBe(201);
   });
 
+  it("accepts a web address typed without https://", async () => {
+    const account = await as(rep).post("/api/accounts", {
+      name: "Dan's Auto",
+      website: "www.dansauto.com",
+      linkedin: "linkedin.com/company/dans-auto",
+    });
+    expect(account.status).toBe(201);
+    expect(account.body.website).toBe("https://www.dansauto.com");
+    expect(account.body.linkedin).toBe("https://linkedin.com/company/dans-auto");
+
+    const kept = await as(rep).patch(`/api/accounts/${account.body.id}`, {
+      website: "http://dansauto.com",
+    });
+    expect(kept.body.website).toBe("http://dansauto.com");
+    const cleared = await as(rep).patch(`/api/accounts/${account.body.id}`, { website: "" });
+    expect(cleared.body.website).toBeNull();
+  });
+
   it("will not delete an account that still has contacts", async () => {
     const account = (await as(manager).post("/api/accounts", { name: "Has Contacts" })).body;
     await as(manager).post("/api/contacts", {

@@ -19,12 +19,12 @@ export function AccountsPage() {
 
   const fields: Field[] = [
     { name: "name", label: "Account Name", required: true, span: 6 },
-    { name: "website", label: "Website", kind: "url", placeholder: "https://company.com" },
+    { name: "website", label: "Website", kind: "url", placeholder: "www.company.com" },
     {
       name: "linkedin",
       label: "LinkedIn",
       kind: "url",
-      placeholder: "https://linkedin.com/company/…",
+      placeholder: "linkedin.com/company/…",
     },
     { name: "hqPhone", label: "HQ Phone", kind: "tel", placeholder: "(555) 123-4567", span: 2 },
     {

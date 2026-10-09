@@ -154,7 +154,11 @@ function FieldInput({
       ) : (
         <Input
           id={id}
-          type={field.kind ?? "text"}
+          // Web addresses use a plain text box: the browser's own "url" check
+          // rejects "www.example.com", which is how most people type one.
+          type={field.kind === "url" ? "text" : (field.kind ?? "text")}
+          inputMode={field.kind === "url" ? "url" : undefined}
+          autoCapitalize={field.kind === "url" ? "none" : undefined}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
