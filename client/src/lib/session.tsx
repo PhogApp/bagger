@@ -8,10 +8,16 @@ import { createContext, useContext, type ReactNode } from "react";
 export interface Session {
   authHeaders: () => Promise<Record<string, string>>;
   orgName: string;
-  /** Opens the screen for inviting and removing people, when sign-in provides one. */
+  userName: string;
+  /** The user's photo, when they have uploaded one. */
+  userImageUrl?: string;
+  /** Opens the screen for name, email, password and sign-in methods. */
+  manageAccount?: () => void;
+  signOut?: () => void;
+  /** Opens the screen for inviting and removing people. */
   manageMembers?: () => void;
-  /** Rendered at the right of the top bar: account menu, organization switcher. */
-  accountControls: ReactNode;
+  /** Lets someone who belongs to several organizations move between them. */
+  orgSwitcher?: ReactNode;
 }
 
 const SessionContext = createContext<Session | null>(null);

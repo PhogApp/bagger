@@ -23,7 +23,8 @@ import * as seq from "../server/sequences/service";
 import { addMember, createOrg, createTestDb } from "./helpers";
 
 const db = await createTestDb();
-const adminCtx = await createOrg(db);
+// Calendar days, so the sample queue has steps in it on weekends too.
+const adminCtx = await createOrg(db, { waitDayMode: "calendar" });
 const repCtx = await addMember(db, adminCtx.orgId, "rep", "Ray Rep");
 const admin = (await resolveActor(db, adminCtx))!;
 const rep = (await resolveActor(db, repCtx))!;

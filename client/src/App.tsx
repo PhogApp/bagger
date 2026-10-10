@@ -8,7 +8,7 @@ import { ContactsPage } from "./pages/Contacts";
 import { LeadsPage } from "./pages/Leads";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
-import { browserTimeZone, SettingsPage } from "./pages/Settings";
+import { AdminPage, browserTimeZone, SettingsPage } from "./pages/Settings";
 import { TemplatesPage } from "./pages/Templates";
 
 function Notice({ title, children }: { title: string; children: string }) {
@@ -69,6 +69,7 @@ export function App() {
         <Route path="/sequences" component={SequencesPage} />
         <Route path="/sequences/:id" component={SequenceDetailPage} />
         <Route path="/settings" component={SettingsPage} />
+        <Route path="/admin" component={AdminPage} />
         <Route path="/">
           <Redirect to="/leads" />
         </Route>
