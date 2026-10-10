@@ -278,6 +278,56 @@ export async function enrollPerson(db: Db, actor: Actor, sequenceId: string, raw
   return engine.enroll(db, actor, { sequenceId, person, ownerId });
 }
 
+export const bulkEnrollInput = z
+  .object({
+    leadIds: z.array(z.uuid()).max(1000).default([]),
+    contactIds: z.array(z.uuid()).max(1000).default([]),
+  })
+  .refine((v) => v.leadIds.length + v.contactIds.length > 0, {
+    message: "Select at least one person",
+  });
+
+/**
+ * Enroll many people at once into the actor's own queue. Each person is
+ * enrolled on their own: one who cannot be (already in a sequence, marked
+ * Do Not Contact) is reported and skipped without stopping the rest.
+ */
+export async function bulkEnroll(db: Db, actor: Actor, sequenceId: string, raw: unknown) {
+  requireTool(actor.permissions, "sequences.enroll");
+  requireTool(actor.permissions, "sequences.bulk_enroll");
+  const input = bulkEnrollInput.parse(raw);
+  const sequence = await loadSequence(db, actor, sequenceId);
+  requireRecord(actor.permissions, "sequences", "view", sequence, actor.userId);
+
+  // Problems with the sequence itself apply to everyone, so check them once.
+  if (!sequence.isActive) throw new engine.SequenceError("sequence_inactive");
+  const [firstStep] = await db
+    .select({ id: sequenceSteps.id })
+    .from(sequenceSteps)
+    .where(and(eq(sequenceSteps.sequenceId, sequenceId), isNull(sequenceSteps.deletedAt)))
+    .limit(1);
+  if (!firstStep) throw new engine.SequenceError("sequence_has_no_steps");
+
+  const people: engine.PersonRef[] = [
+    ...input.leadIds.map((leadId) => ({ leadId })),
+    ...input.contactIds.map((contactId) => ({ contactId })),
+  ];
+  const skipped: { id: string; reason: string }[] = [];
+  let enrolled = 0;
+  for (const person of people) {
+    try {
+      await engine.enroll(db, actor, { sequenceId, person });
+      enrolled++;
+    } catch (err) {
+      if (!(err instanceof engine.SequenceError)) throw err;
+      // A problem with the sequence itself applies to everyone, so stop.
+      if (err.code === "sequence_has_no_steps" || err.code === "sequence_inactive") throw err;
+      skipped.push({ id: "leadId" in person ? person.leadId : person.contactId, reason: err.code });
+    }
+  }
+  return { enrolled, skipped };
+}
+
 export async function listEnrollments(db: Db, actor: Actor, sequenceId: string) {
   const sequence = await loadSequence(db, actor, sequenceId);
   requireRecord(actor.permissions, "sequences", "view", sequence, actor.userId);

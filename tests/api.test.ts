@@ -150,6 +150,68 @@ describe("leads", () => {
   });
 });
 
+describe("importing leads", () => {
+  it("imports good rows, skips duplicates, and reports bad rows by number", async () => {
+    await as(rep).post("/api/leads", newLead({ email: "already@here.example" }));
+    const res = await as(rep).post("/api/leads/import", {
+      rows: [
+        { firstName: "Ann", lastName: "One", email: "Ann.One@Import.example", company: "Acme" },
+        { firstName: "Bob", lastName: "Two", email: "not-an-email" },
+        { firstName: "Cat", lastName: "Three", email: "already@here.example" },
+        { firstName: "Dan", lastName: "Four", email: "ann.one@import.example" }, // same as row 1
+        { firstName: "", lastName: "Five", email: "eve@import.example" },
+        { firstName: "Fay", lastName: "Six", email: "fay@import.example", title: "  ", cellPhone: "" },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(2);
+    expect(res.body.duplicates).toEqual([
+      { row: 3, email: "already@here.example" },
+      { row: 4, email: "ann.one@import.example" },
+    ]);
+    expect(res.body.errors.map((e: { row: number }) => e.row)).toEqual([2, 5]);
+    expect(res.body.errors[0].message).toMatch(/^Email: /);
+    expect(res.body.errors[1].message).toBe("First name is missing");
+
+    const found = (await as(rep).get("/api/leads?q=import.example")).body;
+    expect(found.map((l: { firstName: string }) => l.firstName).sort()).toEqual(["Ann", "Fay"]);
+    const ann = found.find((l: { firstName: string }) => l.firstName === "Ann");
+    expect(ann).toMatchObject({ ownerId: rep.userId, company: "Acme", status: "New" });
+    const history = (await as(rep).get(`/api/history/lead/${ann.id}`)).body;
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ action: "create", source: "import", userId: rep.userId });
+
+    // Importing the same file again creates nothing.
+    const again = await as(rep).post("/api/leads/import", {
+      rows: [{ firstName: "Ann", lastName: "One", email: "ann.one@import.example" }],
+    });
+    expect(again.body).toMatchObject({ created: 0, duplicates: [{ row: 1 }] });
+  });
+
+  it("handles a large file and keeps organizations apart", async () => {
+    const rows = Array.from({ length: 1200 }, (_, i) => ({
+      firstName: "Bulk",
+      lastName: `Lead${i}`,
+      email: `bulk${i}@big.example`,
+    }));
+    const res = await as(manager).post("/api/leads/import", { rows, ownerId: rep2.userId });
+    expect(res.body).toMatchObject({ created: 1200, duplicates: [], errors: [] });
+    const mine = (await as(rep2).get("/api/leads?q=big.example&limit=5")).body;
+    expect(mine[0].ownerId).toBe(rep2.userId);
+    // The same emails are not duplicates in a different organization.
+    const other = await as(outsider).post("/api/leads/import", { rows: rows.slice(0, 3) });
+    expect(other.body.created).toBe(3);
+  });
+
+  it("is refused for a read-only user, and for an owner outside the organization", async () => {
+    const rows = [{ firstName: "X", lastName: "Y", email: "xy@denied.example" }];
+    expect((await as(viewer).post("/api/leads/import", { rows })).status).toBe(403);
+    const badOwner = await as(rep).post("/api/leads/import", { rows, ownerId: outsider.userId });
+    expect(badOwner.status).toBe(400);
+    expect((await as(rep).post("/api/leads/import", { rows: [] })).status).toBe(400);
+  });
+});
+
 describe("accounts and contacts", () => {
   it("requires a contact to belong to an account in the same organization", async () => {
     const account = (await as(rep).post("/api/accounts", { name: "Phog, Inc." })).body;
@@ -364,6 +426,35 @@ describe("building and running a sequence", () => {
     const all = (await as(manager).get("/api/tasks/due?owner=all")).body;
     expect(all.some((t: { taskId: string }) => t.taskId === task.id)).toBe(true);
     expect((await as(manager).post(`/api/tasks/${task.id}/complete`)).status).toBe(200);
+  });
+
+  it("enrolls many people at once and reports who was skipped and why", async () => {
+    const sequence = (await as(rep).post("/api/sequences", { name: "Bulk" })).body;
+    const empty = await as(rep).post(`/api/sequences/${sequence.id}/enrollments/bulk`, {
+      leadIds: ["00000000-0000-4000-8000-000000000001"],
+    });
+    expect(empty.status).toBe(409); // no steps yet: nobody can be enrolled
+    await as(rep).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "One" });
+
+    const fresh = [];
+    for (let i = 0; i < 3; i++) fresh.push((await as(rep).post("/api/leads", newLead())).body.id);
+    const busy = (await as(rep).post("/api/leads", newLead())).body.id;
+    await as(rep).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: busy });
+    const blocked = (await as(rep).post("/api/leads", newLead({ status: "Do Not Contact" }))).body
+      .id;
+
+    const res = await as(rep).post(`/api/sequences/${sequence.id}/enrollments/bulk`, {
+      leadIds: [...fresh, busy, blocked],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.enrolled).toBe(3);
+    expect(res.body.skipped).toEqual([
+      { id: busy, reason: "already_enrolled" },
+      { id: blocked, reason: "do_not_contact" },
+    ]);
+    expect((await as(viewer).post(`/api/sequences/${sequence.id}/enrollments/bulk`, {
+      leadIds: fresh,
+    })).status).toBe(403);
   });
 
   it("counts enrollments per sequence for the list screen", async () => {

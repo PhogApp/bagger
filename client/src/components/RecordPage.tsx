@@ -78,6 +78,13 @@ export interface RecordPageProps<T extends BaseRecord> {
   describe: (row: T) => string;
   /** When set, clicking a row calls this instead of opening the edit dialog. */
   onRowOpen?: (row: T) => void;
+  /** Extra buttons beside "Add", e.g. Import. */
+  headerActions?: ReactNode;
+  /**
+   * Turns on row checkboxes. Called with the checked rows to draw the actions
+   * that apply to them; call `clear` when an action is finished.
+   */
+  bulkActions?: (selected: T[], clear: () => void) => ReactNode;
 }
 
 interface HistoryEntry {
@@ -244,6 +251,19 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
     queryFn: () => api<T[]>("GET", `/api/${object}${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   });
 
+  // Rows ticked for a bulk action. Only rows still on screen count.
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const rows = list.data ?? [];
+  const selected = rows.filter((r) => checked.has(r.id));
+  const allChecked = rows.length > 0 && selected.length === rows.length;
+  const toggle = (id: string) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const blank = useMemo(
     () => Object.fromEntries(fields.map((f) => [f.name, props.defaults?.[f.name] ?? ""])),
     [fields, props.defaults],
@@ -337,12 +357,15 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
           <h1 className="text-2xl font-semibold tracking-tight">{props.title}</h1>
           <p className="text-sm text-muted-foreground">{props.subtitle}</p>
         </div>
-        {can.canCreate && (
-          <Button onClick={() => open("new")}>
-            <Plus className="mr-2 h-4 w-4" aria-hidden />
-            Add {singular}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {props.headerActions}
+          {can.canCreate && (
+            <Button onClick={() => open("new")}>
+              <Plus className="mr-2 h-4 w-4" aria-hidden />
+              Add {singular}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="p-6">
@@ -363,6 +386,16 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             </div>
           </div>
 
+          {props.bulkActions && selected.length > 0 && (
+            <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-2 text-sm">
+              <span className="font-medium">{selected.length} selected</span>
+              {props.bulkActions(selected, () => setChecked(new Set()))}
+              <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())}>
+                Clear
+              </Button>
+            </div>
+          )}
+
           {list.error ? (
             <p className="p-8 text-center text-sm text-destructive">{list.error.message}</p>
           ) : list.isLoading ? (
@@ -379,6 +412,18 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {props.bulkActions && (
+                    <TableHead className="w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all shown"
+                        checked={allChecked}
+                        onChange={() =>
+                          setChecked(allChecked ? new Set() : new Set(rows.map((r) => r.id)))
+                        }
+                      />
+                    </TableHead>
+                  )}
                   {props.columns.map((c) => (
                     <TableHead key={c.header}>{c.header}</TableHead>
                   ))}
@@ -395,6 +440,17 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                       if (e.key === "Enter") openRow(row);
                     }}
                   >
+                    {props.bulkActions && (
+                      // Clicking the box must not also open the record.
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${props.describe(row)}`}
+                          checked={checked.has(row.id)}
+                          onChange={() => toggle(row.id)}
+                        />
+                      </TableCell>
+                    )}
                     {props.columns.map((c) => (
                       <TableCell key={c.header}>{c.cell(row)}</TableCell>
                     ))}
