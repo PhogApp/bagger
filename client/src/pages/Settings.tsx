@@ -10,8 +10,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserPlus } from "lucide-react";
-import { canUse, useApi, useMe, type OrgUser } from "@/lib/api";
+import { LogOut, UserPlus } from "lucide-react";
+import { Avatar } from "@/components/AppLayout";
+import { canUse, isAdmin, useApi, useMe, type OrgUser } from "@/lib/api";
 import { useSession } from "@/lib/session";
 
 interface MySettings {
@@ -345,16 +346,85 @@ function UsersSection({ canManage }: { canManage: boolean }) {
   );
 }
 
-export function SettingsPage() {
+function AccountSection() {
   const { data: me } = useMe();
+  const { userName, userImageUrl, orgName, orgSwitcher, manageAccount, signOut } = useSession();
+  return (
+    <Section title="Account" description="Who you are signed in as.">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Avatar name={userName} imageUrl={userImageUrl} />
+          <div>
+            <p className="text-sm font-medium">{userName}</p>
+            <p className="text-sm text-muted-foreground">
+              {me?.user.email} · {me?.role} at {orgName}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {manageAccount && (
+            <Button variant="outline" onClick={manageAccount}>
+              Manage account
+            </Button>
+          )}
+          {signOut && (
+            <Button variant="outline" onClick={signOut}>
+              <LogOut className="mr-2 h-4 w-4" aria-hidden />
+              Sign out
+            </Button>
+          )}
+        </div>
+      </div>
+      {orgSwitcher && (
+        <div className="mt-4 flex items-center gap-3 border-t pt-4">
+          <span className="text-sm text-muted-foreground">Organization</span>
+          {orgSwitcher}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="border-b bg-background px-6 py-4">
+      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+      <p className="text-sm text-muted-foreground">{subtitle}</p>
+    </div>
+  );
+}
+
+/** Personal settings: visible to everyone. */
+export function SettingsPage() {
   return (
     <div>
-      <div className="border-b bg-background px-6 py-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">Your preferences and your organization's</p>
-      </div>
+      <PageHeader title="Settings" subtitle="Your account and preferences" />
       <div className="max-w-4xl space-y-6 p-6">
+        <AccountSection />
         <MySettingsSection />
+      </div>
+    </div>
+  );
+}
+
+/** Organization settings and users: visible to admins only. */
+export function AdminPage() {
+  const { data: me } = useMe();
+  if (!me) return null;
+  if (!isAdmin(me)) {
+    return (
+      <div className="p-10 text-center">
+        <h1 className="text-2xl font-semibold tracking-tight">Admins only</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Ask an admin in your organization if something here needs changing.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <PageHeader title="Admin" subtitle="Settings and people for your whole organization" />
+      <div className="max-w-4xl space-y-6 p-6">
         <OrganizationSection canEdit={canUse(me, "setup.org_settings")} />
         <UsersSection canManage={canUse(me, "account.users_and_roles")} />
       </div>

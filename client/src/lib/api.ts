@@ -114,3 +114,8 @@ export function permissionsFor(me: Me | undefined, object: ObjectName) {
 export function canUse(me: Me | undefined, tool: string): boolean {
   return me?.permissions[tool] === true;
 }
+
+/** Admin screens are for people who manage the organization's settings or users. */
+export function isAdmin(me: Me | undefined): boolean {
+  return canUse(me, "setup.org_settings") || canUse(me, "account.users_and_roles");
+}

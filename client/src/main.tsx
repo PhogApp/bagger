@@ -8,7 +8,7 @@ import {
   useAuth,
   useClerk,
   useOrganization,
-  UserButton,
+  useUser,
 } from "@clerk/clerk-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -59,6 +59,7 @@ function WithQueries({ scope, children }: { scope: string; children: ReactNode }
 function ClerkSession() {
   const { getToken } = useAuth();
   const clerk = useClerk();
+  const { user } = useUser();
   const { organization, isLoaded } = useOrganization();
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getToken();
@@ -83,23 +84,24 @@ function ClerkSession() {
   const session: Session = {
     authHeaders,
     orgName: organization.name,
+    userName: user?.fullName || user?.primaryEmailAddress?.emailAddress || "You",
+    userImageUrl: user?.hasImage ? user.imageUrl : undefined,
+    manageAccount: () => clerk.openUserProfile(),
+    signOut: () => void clerk.signOut(),
     manageMembers: () => clerk.openOrganizationProfile(),
-    accountControls: (
-      <>
-        <OrganizationSwitcher
-          hidePersonal
-          hideSlug
-          afterSelectOrganizationUrl="/"
-          appearance={{
-            elements: {
-              // A signed-in user already has an organization. Starting another
-              // one from here would create a separate, separately billed customer.
-              organizationSwitcherPopoverActionButton__createOrganization: { display: "none" },
-            },
-          }}
-        />
-        <UserButton />
-      </>
+    orgSwitcher: (
+      <OrganizationSwitcher
+        hidePersonal
+        hideSlug
+        afterSelectOrganizationUrl="/"
+        appearance={{
+          elements: {
+            // A signed-in user already has an organization. Starting another
+            // one from here would create a separate, separately billed customer.
+            organizationSwitcherPopoverActionButton__createOrganization: { display: "none" },
+          },
+        }}
+      />
     ),
   };
   return (
@@ -115,11 +117,7 @@ function PreviewSession({ config }: { config: Config }) {
   const session: Session = {
     authHeaders: async () => ({ "x-user": config.devUser!, "x-org": config.devOrg! }),
     orgName: config.devOrgName ?? "Preview",
-    accountControls: (
-      <span className="text-sm text-muted-foreground">
-        {config.devUserName} · {config.devOrgName} (preview)
-      </span>
-    ),
+    userName: config.devUserName ?? "Preview User",
   };
   return (
     <SessionProvider value={session}>
