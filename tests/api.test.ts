@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import request from "supertest";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveActor } from "../server/auth/actor";
 import type { Ctx, Db } from "../server/db/types";
 import { createApp } from "../server/http/app";
@@ -24,7 +24,11 @@ beforeAll(async () => {
     const orgId = req.header("x-org");
     return userId && orgId ? resolveActor(db, { userId, orgId }) : null;
   });
-  admin = await createOrg(db);
+  // Calendar-day mode, so "enroll now, see it in the queue now" holds on every
+  // day of the week. In business-day mode a step enrolled on a Saturday is due
+  // Monday, which made these tests fail when run on a weekend. That weekend
+  // rule has its own test below, with the clock pinned.
+  admin = await createOrg(db, { waitDayMode: "calendar" });
   manager = await addMember(db, admin.orgId, "manager", "Mia Manager");
   rep = await addMember(db, admin.orgId, "rep", "Ray Rep");
   rep2 = await addMember(db, admin.orgId, "rep", "Rita Rep");
@@ -381,6 +385,27 @@ describe("building and running a sequence", () => {
     expect(foreign[sequence.id]).toBeUndefined();
   });
 
+  it("holds a step enrolled on a Saturday until Monday in business-day mode", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-10T15:00:00Z")); // Saturday morning in Chicago
+      const org = await createOrg(db); // business days by default
+      const sequence = (await as(org).post("/api/sequences", { name: "Weekend" })).body;
+      await as(org).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "One" });
+      const lead = (await as(org).post("/api/leads", newLead())).body;
+      const { task } = (
+        await as(org).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: lead.id })
+      ).body;
+      expect(task.dueOn).toBe("2026-10-12");
+      expect((await as(org).get("/api/tasks/due")).body).toHaveLength(0);
+
+      vi.setSystemTime(new Date("2026-10-12T15:00:00Z")); // Monday
+      expect((await as(org).get("/api/tasks/due")).body).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a read-only user from enrolling anyone", async () => {
     const sequence = (await as(rep).post("/api/sequences", { name: "No enroll" })).body;
     await as(rep).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "One" });
@@ -433,7 +458,7 @@ describe("settings", () => {
       newValue: "calendar",
     });
     // Other organizations are untouched.
-    expect((await as(rep).get("/api/settings")).body.waitDayMode).toBe("business");
+    expect((await as(rep).get("/api/settings")).body.waitDayMode).toBe("calendar");
   });
 });
 
