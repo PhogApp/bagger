@@ -48,14 +48,27 @@ export function Avatar({ name, imageUrl }: { name: string; imageUrl?: string }) 
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
-  const { userName, userImageUrl } = useSession();
+  const { userName, userImageUrl, orgName, orgLogoUrl } = useSession();
   const { data: me } = useMe();
   const at = (href: string) => location === href || location.startsWith(`${href}/`);
 
   return (
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between border-b bg-background px-6">
-        <Brand />
+        <div className="flex items-center gap-4">
+          <Brand />
+          {orgLogoUrl && (
+            <>
+              <span className="h-8 w-px bg-border" aria-hidden />
+              <img
+                src={orgLogoUrl}
+                alt={orgName}
+                title={orgName}
+                className="h-9 max-w-40 rounded object-contain"
+              />
+            </>
+          )}
+        </div>
         <RunStepsButton />
       </header>
       <div className="flex flex-1">

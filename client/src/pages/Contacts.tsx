@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
-import { useApi, useMe, useOrgUsers } from "@/lib/api";
+import { BulkEnrollButton } from "@/components/BulkEnroll";
+import { canUse, useApi, useMe, useOrgUsers } from "@/lib/api";
 import { formatPhone } from "@/lib/utils";
 import type { Account } from "./Accounts";
 import { nameOf, ownerField, PERSON_STATUSES, toOptions } from "./shared";
@@ -103,6 +104,13 @@ export function ContactsPage() {
       fields={fields}
       columns={columns}
       defaults={{ status: "New", ownerId: me?.user.id ?? "" }}
+      bulkActions={
+        canUse(me, "sequences.bulk_enroll")
+          ? (selected, clear) => (
+              <BulkEnrollButton kind="contacts" people={selected} onDone={clear} />
+            )
+          : undefined
+      }
       describe={(c) => `${c.firstName} ${c.lastName}`}
     />
   );
