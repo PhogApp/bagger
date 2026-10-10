@@ -8,6 +8,8 @@ import { createContext, useContext, type ReactNode } from "react";
 export interface Session {
   authHeaders: () => Promise<Record<string, string>>;
   orgName: string;
+  /** The organization's own logo, when one has been uploaded. */
+  orgLogoUrl?: string;
   userName: string;
   /** The user's photo, when they have uploaded one. */
   userImageUrl?: string;

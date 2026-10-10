@@ -37,6 +37,13 @@ const CLERK_APPEARANCE = {
     borderRadius: "0.5rem",
     fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
   },
+  elements: {
+    // Bagger has no use for slugs, so the field is hidden wherever Clerk shows it.
+    formFieldRow__slug: { display: "none" },
+    // Leaving or deleting an organization here would strand its Bagger data.
+    // Ownership changes and cancelling are done on Bagger's Organization page.
+    profileSection__organizationDanger: { display: "none" },
+  },
 };
 
 function Centered({ children }: { children: ReactNode }) {
@@ -87,6 +94,7 @@ function ClerkSession() {
   const session: Session = {
     authHeaders,
     orgName: organization.name,
+    orgLogoUrl: organization.hasImage ? organization.imageUrl : undefined,
     userName: user?.fullName || user?.primaryEmailAddress?.emailAddress || "You",
     userImageUrl: user?.hasImage ? user.imageUrl : undefined,
     manageAccount: () => clerk.openUserProfile(),
