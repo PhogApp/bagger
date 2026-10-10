@@ -1,5 +1,5 @@
 import path from "node:path";
-import { clerkAuthenticator, clerkSession } from "./auth/clerk";
+import { clerkAuthenticator, clerkRoleSync, clerkSession } from "./auth/clerk";
 import { connect } from "./db/client";
 import { createApp } from "./http/app";
 
@@ -21,6 +21,7 @@ const { db, pool } = connect(databaseUrl);
 const app = createApp(db, clerkAuthenticator(db), {
   before: [clerkSession()],
   publicConfig: { clerkPublishableKey },
+  onRoleChange: clerkRoleSync(db),
   staticDir: path.resolve("dist/public"),
 });
 

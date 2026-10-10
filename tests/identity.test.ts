@@ -32,6 +32,7 @@ describe("first sign-in", () => {
     const actor = await resolveActor(db, local);
     expect(actor?.roleName).toBe("Admin");
     expect(actor?.billingStatus).toBe("active");
+    expect(actor?.isOwner).toBe(true);
 
     const roles = await db.select().from(s.roles).where(eq(s.roles.orgId, local.orgId));
     expect(roles.map((r) => r.name).sort()).toEqual(["Admin", "Manager", "Read-only", "Rep"]);
@@ -61,7 +62,9 @@ describe("first sign-in", () => {
       { clerkUserId: "u3", clerkOrgId: "o1", clerkOrgRole: "org:admin" },
       source,
     );
-    expect((await resolveActor(db, joiner))?.roleName).toBe("Admin");
+    const actor = await resolveActor(db, joiner);
+    expect(actor?.roleName).toBe("Admin");
+    expect(actor?.isOwner).toBe(false); // an Admin, but not the owner
   });
 });
 

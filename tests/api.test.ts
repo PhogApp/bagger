@@ -493,13 +493,15 @@ describe("users and roles", () => {
     const repRole = roles.find((r: { name: string }) => r.name === "Rep");
     const adminRole = roles.find((r: { name: string }) => r.name === "Admin");
 
+    // The owner is always an Admin, so an organization can never have none.
     const refused = await as(org).put(`/api/users/${org.userId}/role`, { roleId: repRole.id });
     expect(refused.status).toBe(400);
-    expect(refused.body.message).toMatch(/only Admin/);
+    expect((await as(org).get("/api/me")).body.role).toBe("Admin");
 
-    // With a second Admin in place, the first can step down.
+    // To step down, the owner makes someone else an Admin and hands over first.
     await as(org).put(`/api/users/${other.userId}/role`, { roleId: adminRole.id });
-    const allowed = await as(org).put(`/api/users/${org.userId}/role`, { roleId: repRole.id });
+    await as(org).post("/api/organization/transfer", { userId: other.userId });
+    const allowed = await as(other).put(`/api/users/${org.userId}/role`, { roleId: repRole.id });
     expect(allowed.status).toBe(204);
     expect((await as(org).get("/api/me")).body.role).toBe("Rep");
   });
@@ -515,6 +517,88 @@ describe("users and roles", () => {
       roleId: foreignRoles[1].id,
     });
     expect(wrongRole.status).toBe(400);
+  });
+});
+
+describe("the organization owner", () => {
+  it("is whoever created the organization, and only they can open the Organization tab", async () => {
+    const org = await createOrg(db);
+    const secondAdmin = await addMember(db, org.orgId, "admin", "Second Admin");
+    expect((await as(org).get("/api/me")).body.isOwner).toBe(true);
+    expect((await as(secondAdmin).get("/api/me")).body.isOwner).toBe(false);
+
+    const mine = await as(org).get("/api/organization");
+    expect(mine.status).toBe(200);
+    expect(mine.body.owner.id).toBe(org.userId);
+    expect(mine.body.transferCandidates.map((c: { id: string }) => c.id)).toEqual([
+      secondAdmin.userId,
+    ]);
+    // Another Admin is still not the owner.
+    expect((await as(secondAdmin).get("/api/organization")).status).toBe(403);
+    expect(
+      (await as(secondAdmin).patch("/api/organization", { billingEmail: "x@example.com" })).status,
+    ).toBe(403);
+  });
+
+  it("sets an optional billing email", async () => {
+    const org = await createOrg(db);
+    const saved = await as(org).patch("/api/organization", { billingEmail: "AP@Example.com" });
+    expect(saved.body.billingEmail).toBe("ap@example.com");
+    expect((await as(org).patch("/api/organization", { billingEmail: "nope" })).status).toBe(400);
+    const cleared = await as(org).patch("/api/organization", { billingEmail: "" });
+    expect(cleared.body.billingEmail).toBeNull();
+  });
+
+  it("must stay an Admin until ownership is transferred", async () => {
+    const org = await createOrg(db);
+    const other = await addMember(db, org.orgId, "admin", "Other Admin");
+    const roles = (await as(org).get("/api/roles")).body;
+    const repRole = roles.find((r: { name: string }) => r.name === "Rep");
+    // There are two Admins, so the "last Admin" rule does not apply; the owner rule does.
+    const refused = await as(other).put(`/api/users/${org.userId}/role`, { roleId: repRole.id });
+    expect(refused.status).toBe(400);
+    expect(refused.body.message).toMatch(/Transfer ownership first/);
+  });
+
+  it("transfers to another Admin at once, and records it", async () => {
+    const org = await createOrg(db);
+    const rep = await addMember(db, org.orgId, "rep", "Just A Rep");
+    const next = await addMember(db, org.orgId, "admin", "Next Owner");
+
+    // Not to a non-admin, not to yourself, not to someone outside.
+    expect((await as(org).post("/api/organization/transfer", { userId: rep.userId })).status).toBe(
+      400,
+    );
+    expect((await as(org).post("/api/organization/transfer", { userId: org.userId })).status).toBe(
+      400,
+    );
+    expect(
+      (await as(org).post("/api/organization/transfer", { userId: outsider.userId })).status,
+    ).toBe(404);
+    // And only the owner can do it.
+    expect((await as(next).post("/api/organization/transfer", { userId: next.userId })).status).toBe(
+      403,
+    );
+
+    const done = await as(org).post("/api/organization/transfer", { userId: next.userId });
+    expect(done.status).toBe(204);
+    expect((await as(next).get("/api/me")).body.isOwner).toBe(true);
+    const before = await as(org).get("/api/me");
+    expect(before.body.isOwner).toBe(false);
+    expect(before.body.role).toBe("Admin"); // the previous owner stays an Admin
+    expect((await as(org).get("/api/organization")).status).toBe(403);
+
+    const users = (await as(next).get("/api/users")).body;
+    expect(users.filter((u: { isOwner: boolean }) => u.isOwner).map((u: { id: string }) => u.id))
+      .toEqual([next.userId]);
+    const history = (await as(next).get(`/api/history/organization/${org.orgId}`)).body;
+    expect(history[0]).toMatchObject({ field: "owner", oldValue: "Admin", newValue: "Next Owner" });
+
+    // Now the previous owner can be demoted like anyone else.
+    const roles = (await as(next).get("/api/roles")).body;
+    const repRole = roles.find((r: { name: string }) => r.name === "Rep");
+    expect((await as(next).put(`/api/users/${org.userId}/role`, { roleId: repRole.id })).status)
+      .toBe(204);
   });
 });
 

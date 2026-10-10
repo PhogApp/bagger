@@ -244,7 +244,8 @@ function UsersSection({ canManage }: { canManage: boolean }) {
   const { data: me } = useMe();
   const users = useQuery({
     queryKey: ["users"],
-    queryFn: () => api<(OrgUser & { roleId: string })[]>("GET", "/api/users"),
+    queryFn: () =>
+      api<(OrgUser & { roleId: string; isOwner: boolean })[]>("GET", "/api/users"),
   });
   const roles = useQuery({ queryKey: ["roles"], queryFn: () => api<Role[]>("GET", "/api/roles") });
   const [error, setError] = useState<string | null>(null);
@@ -299,6 +300,11 @@ function UsersSection({ canManage }: { canManage: boolean }) {
                 {u.id === me?.user.id && (
                   <span className="ml-2 text-xs font-normal text-muted-foreground">you</span>
                 )}
+                {u.isOwner && (
+                  <span className="ml-2 rounded-full bg-brand-ocean/15 px-2 py-0.5 text-xs font-medium text-brand-deep">
+                    Owner
+                  </span>
+                )}
               </TableCell>
               <TableCell>{u.email}</TableCell>
               <TableCell>
@@ -307,7 +313,9 @@ function UsersSection({ canManage }: { canManage: boolean }) {
                     aria-label={`Role for ${u.name}`}
                     className={selectClass}
                     value={u.roleId}
-                    disabled={change.isPending}
+                    // The owner must stay an Admin until ownership is transferred.
+                    disabled={change.isPending || u.isOwner}
+                    title={u.isOwner ? "The owner is always an Admin" : undefined}
                     onChange={(e) => change.mutate({ userId: u.id, roleId: e.target.value })}
                   >
                     {roles.data?.map((r) => (

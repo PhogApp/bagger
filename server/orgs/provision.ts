@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { memberships, organizations, orgSettings, roles, users } from "../../shared/schema";
 import { PRESET_ROLES, type PresetKey } from "../auth/permissions";
 import type { Db } from "../db/types";
@@ -60,6 +61,7 @@ export async function provisionOrganization(
       })
       .returning();
     await tx.insert(memberships).values({ orgId, userId: admin.id, roleId: roleIds.admin });
+    await tx.update(organizations).set({ ownerUserId: admin.id }).where(eq(organizations.id, orgId));
     return { orgId, adminUserId: admin.id, roleIds };
   });
 }

@@ -1,7 +1,10 @@
 import { clerkClient, clerkMiddleware, getAuth } from "@clerk/express";
 import type { RequestHandler } from "express";
+import { eq } from "drizzle-orm";
+import { organizations, users } from "../../shared/schema";
 import type { Db } from "../db/types";
 import type { Authenticator } from "../http/app";
+import type { RoleChangeListener } from "../settings/service";
 import { resolveActor } from "./actor";
 import { syncIdentity, type ProfileSource } from "./identity";
 
@@ -41,5 +44,35 @@ export function clerkAuthenticator(db: Db): Authenticator {
       clerkProfiles,
     );
     return resolveActor(db, local);
+  };
+}
+
+/**
+ * Keeps Clerk's own admin flag in step with Bagger's Admin role. Clerk draws
+ * the screens for inviting and removing people and only lets its own admins
+ * use them, so a Bagger Admin must be a Clerk admin too.
+ */
+export function clerkRoleSync(db: Db): RoleChangeListener {
+  return async ({ orgId, userId, isAdmin }) => {
+    const [org] = await db
+      .select({ clerkOrgId: organizations.clerkOrgId })
+      .from(organizations)
+      .where(eq(organizations.id, orgId));
+    const [user] = await db
+      .select({ clerkUserId: users.clerkUserId })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!org?.clerkOrgId || !user?.clerkUserId) return;
+    try {
+      await clerkClient.organizations.updateOrganizationMembership({
+        organizationId: org.clerkOrgId,
+        userId: user.clerkUserId,
+        role: isAdmin ? "org:admin" : "org:member",
+      });
+    } catch (err) {
+      // The Bagger role is already saved and is what Bagger enforces. Log
+      // and carry on; the next role change will try again.
+      console.error("Could not update the Clerk role", err);
+    }
   };
 }

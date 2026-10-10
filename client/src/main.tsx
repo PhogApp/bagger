@@ -8,6 +8,7 @@ import {
   useAuth,
   useClerk,
   useOrganization,
+  useOrganizationList,
   useUser,
 } from "@clerk/clerk-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -61,6 +62,8 @@ function ClerkSession() {
   const clerk = useClerk();
   const { user } = useUser();
   const { organization, isLoaded } = useOrganization();
+  const { userMemberships } = useOrganizationList({ userMemberships: true });
+  const organizationCount = userMemberships?.count ?? 0;
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -89,7 +92,8 @@ function ClerkSession() {
     manageAccount: () => clerk.openUserProfile(),
     signOut: () => void clerk.signOut(),
     manageMembers: () => clerk.openOrganizationProfile(),
-    orgSwitcher: (
+    // Only useful to someone who belongs to more than one organization.
+    orgSwitcher: organizationCount > 1 && (
       <OrganizationSwitcher
         hidePersonal
         hideSlug

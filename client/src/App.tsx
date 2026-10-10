@@ -6,6 +6,7 @@ import { useApi, useMe } from "./lib/api";
 import { AccountsPage } from "./pages/Accounts";
 import { ContactsPage } from "./pages/Contacts";
 import { LeadsPage } from "./pages/Leads";
+import { OrganizationPage } from "./pages/Organization";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
 import { AdminPage, browserTimeZone, SettingsPage } from "./pages/Settings";
@@ -70,6 +71,7 @@ export function App() {
         <Route path="/sequences/:id" component={SequenceDetailPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/admin" component={AdminPage} />
+        <Route path="/organization" component={OrganizationPage} />
         <Route path="/">
           <Redirect to="/leads" />
         </Route>

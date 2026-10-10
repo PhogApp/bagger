@@ -22,6 +22,7 @@ import {
 } from "../records";
 import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
+import * as organization from "../orgs/organization";
 import * as settings from "../settings/service";
 
 /**
@@ -88,6 +89,8 @@ export interface AppOptions {
   before?: RequestHandler[];
   /** Non-secret settings the browser needs before anyone is signed in. */
   publicConfig?: Record<string, string>;
+  /** Called after a user gains or loses the Admin role. */
+  onRoleChange?: settings.RoleChangeListener;
   /** Folder holding the built web client. Omitted in tests. */
   staticDir?: string;
 }
@@ -128,6 +131,7 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       role: actor.roleName,
       permissions: actor.permissions,
       billingStatus: actor.billingStatus,
+      isOwner: actor.isOwner,
     });
   });
 
@@ -163,7 +167,19 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     res.json(await settings.listRoles(db, actorOf(req)));
   });
   api.put("/users/:id/role", async (req, res) => {
-    await settings.changeUserRole(db, actorOf(req), id(req), req.body);
+    await settings.changeUserRole(db, actorOf(req), id(req), req.body, options.onRoleChange);
+    res.status(204).end();
+  });
+
+  // ---- the Organization tab (owner only)
+  api.get("/organization", async (req, res) => {
+    res.json(await organization.getOrganization(db, actorOf(req)));
+  });
+  api.patch("/organization", async (req, res) => {
+    res.json(await organization.updateOrganization(db, actorOf(req), req.body));
+  });
+  api.post("/organization/transfer", async (req, res) => {
+    await organization.transferOwnership(db, actorOf(req), req.body);
     res.status(204).end();
   });
 

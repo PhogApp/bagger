@@ -114,6 +114,10 @@ async function createMissing(
         .where(and(eq(roles.orgId, orgId), eq(roles.presetKey, presetKey)));
       await tx.insert(memberships).values({ orgId, userId, roleId: role.id });
     }
+    if (isNewOrg) {
+      // Whoever creates an organization owns it.
+      await tx.update(organizations).set({ ownerUserId: userId }).where(eq(organizations.id, orgId));
+    }
     return { orgId, userId };
   });
 }
