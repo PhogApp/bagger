@@ -1,6 +1,13 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { memberships, orgSettings, roles, users, waitDayModeEnum } from "../../shared/schema";
+import {
+  memberships,
+  organizations,
+  orgSettings,
+  roles,
+  users,
+  waitDayModeEnum,
+} from "../../shared/schema";
 import { diffFields, recordUpdate } from "../audit/history";
 import type { Actor } from "../auth/actor";
 import { requireTool } from "../auth/permissions";
@@ -108,10 +115,12 @@ export async function listUsers(db: Db, actor: Actor) {
       role: roles.name,
       roleId: roles.id,
       status: memberships.status,
+      isOwner: sql<boolean>`${organizations.ownerUserId} = ${users.id}`,
     })
     .from(memberships)
     .innerJoin(users, eq(memberships.userId, users.id))
     .innerJoin(roles, eq(memberships.roleId, roles.id))
+    .innerJoin(organizations, eq(memberships.orgId, organizations.id))
     .where(
       and(eq(memberships.orgId, actor.orgId), inArray(memberships.status, ["active", "ending"])),
     )
@@ -128,10 +137,26 @@ export async function listRoles(db: Db, actor: Actor) {
 
 export const changeRoleInput = z.object({ roleId: z.uuid() });
 
-export async function changeUserRole(db: Db, actor: Actor, userId: string, raw: unknown) {
+/**
+ * Tells the sign-in provider when someone gains or loses Admin, so the
+ * screens it draws (inviting and removing people) allow the same people.
+ */
+export type RoleChangeListener = (change: {
+  orgId: string;
+  userId: string;
+  isAdmin: boolean;
+}) => Promise<void>;
+
+export async function changeUserRole(
+  db: Db,
+  actor: Actor,
+  userId: string,
+  raw: unknown,
+  onChange?: RoleChangeListener,
+) {
   requireTool(actor.permissions, "account.users_and_roles");
   const { roleId } = changeRoleInput.parse(raw);
-  await db.transaction(async (tx) => {
+  const becameAdmin = await db.transaction(async (tx) => {
     // Lock every active membership in the org so two admins demoting each
     // other at the same moment cannot leave the organization with none.
     const members = await tx
@@ -150,7 +175,17 @@ export async function changeUserRole(db: Db, actor: Actor, userId: string, raw: 
       .from(roles)
       .where(and(eq(roles.id, roleId), eq(roles.orgId, actor.orgId)));
     if (!newRole) throw new ValidationError("Role not found");
-    if (newRole.id === target.membership.roleId) return;
+    if (newRole.id === target.membership.roleId) return null;
+
+    const [org] = await tx
+      .select({ ownerUserId: organizations.ownerUserId })
+      .from(organizations)
+      .where(eq(organizations.id, actor.orgId));
+    if (org?.ownerUserId === userId && newRole.presetKey !== "admin") {
+      throw new ValidationError(
+        "This person owns the organization and must stay an Admin. Transfer ownership first.",
+      );
+    }
 
     const admins = members.filter((m) => m.presetKey === "admin");
     if (target.presetKey === "admin" && admins.length === 1) {
@@ -166,5 +201,9 @@ export async function changeUserRole(db: Db, actor: Actor, userId: string, raw: 
     await recordUpdate(tx, actor, "membership", target.membership.id, [
       { field: "role", oldValue: target.roleName, newValue: newRole.name },
     ]);
+    return newRole.presetKey === "admin";
   });
+  if (becameAdmin !== null && onChange) {
+    await onChange({ orgId: actor.orgId, userId, isAdmin: becameAdmin });
+  }
 }

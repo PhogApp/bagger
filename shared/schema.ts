@@ -84,6 +84,13 @@ export const organizations = pgTable("organizations", {
   name: text("name").notNull(),
   clerkOrgId: text("clerk_org_id").unique(),
   billingStatus: billingStatusEnum("billing_status").notNull().default("active"),
+  /**
+   * The one person answerable for the organization: billing, cancelling,
+   * handing it on. Always an Admin. Set when the organization is created.
+   */
+  ownerUserId: uuid("owner_user_id"),
+  /** Optional extra address for invoices and payment notices. */
+  billingEmail: text("billing_email"),
   createdAt: createdAt(),
 });
 

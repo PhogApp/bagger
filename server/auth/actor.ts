@@ -8,6 +8,8 @@ export interface Actor extends Ctx {
   permissions: PermissionMap;
   roleName: string;
   billingStatus: "active" | "locked" | "cancelled";
+  /** True for the single owner of the organization. */
+  isOwner: boolean;
 }
 
 /**
@@ -23,6 +25,7 @@ export async function resolveActor(
       permissions: roles.permissions,
       roleName: roles.name,
       billingStatus: organizations.billingStatus,
+      ownerUserId: organizations.ownerUserId,
     })
     .from(memberships)
     .innerJoin(roles, eq(memberships.roleId, roles.id))
@@ -36,7 +39,8 @@ export async function resolveActor(
       ),
     );
   if (!row) return null;
-  return { orgId: who.orgId, userId: who.userId, ...row };
+  const { ownerUserId, ...rest } = row;
+  return { orgId: who.orgId, userId: who.userId, ...rest, isOwner: ownerUserId === who.userId };
 }
 
 /** Is this user an active member of the organization? Used to validate owners. */

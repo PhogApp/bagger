@@ -1,6 +1,7 @@
 import {
   Building2,
   FileText,
+  Landmark,
   ListOrdered,
   ShieldCheck,
   UserPlus,
@@ -72,6 +73,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
 
           <div className="space-y-0.5 border-t border-white/15 pt-3">
+            {me?.isOwner && (
+              <Link href="/organization" className={itemClass(at("/organization"))}>
+                <Landmark className="h-4 w-4" aria-hidden />
+                Organization
+              </Link>
+            )}
             {isAdmin(me) && (
               <Link href="/admin" className={itemClass(at("/admin"))}>
                 <ShieldCheck className="h-4 w-4" aria-hidden />

@@ -74,6 +74,8 @@ export interface Me {
   role: string;
   permissions: Record<string, string | boolean>;
   billingStatus: "active" | "locked" | "cancelled";
+  /** True for the one person who owns the organization. */
+  isOwner: boolean;
 }
 
 export interface OrgUser {

@@ -8,3 +8,4 @@
 - Records are soft-deleted (`deleted_at`).
 - After changing `shared/schema.ts`, run `npm run db:generate` and commit the migration.
 - Before committing: `npm run check && npm test`. Tests run against PGlite with the real migrations and take about a minute.
+- Three levels of access below the record permissions: everyone has Settings; Admins (role) have Admin; exactly one owner per organization (`organizations.owner_user_id`, `actor.isOwner`) has Organization. The owner is always an Admin. Billing belongs to the owner.
