@@ -12,6 +12,7 @@ import {
 } from "../../shared/schema";
 import { ValidationError } from "../errors";
 import { stopForPerson } from "../sequences/engine";
+import { accountMatches, personMatches } from "./duplicates";
 import { recordService } from "./service";
 
 const text = z.string().trim().min(1);
@@ -83,6 +84,11 @@ export const leadService = recordService<typeof leads.$inferSelect, typeof leadI
   input: leadInput,
   search: [leads.firstName, leads.lastName, leads.email, leads.company, leads.cellPhone],
   orderBy: [leads.lastName, leads.firstName],
+  // A converted lead lives on as its contact. The row stays for its history.
+  hidden: isNull(leads.convertedAt),
+  frozen: (lead) => (lead.convertedAt ? "This lead was converted to a contact." : null),
+  duplicates: (tx, actor, values) =>
+    personMatches(tx, actor.orgId, values.email, ["contact", "lead"]),
   afterUpdate: async (tx, actor, before, after) => {
     if (before.status !== after.status && STOP_STATUSES.has(after.status)) {
       await stopForPerson(tx, actor, { leadId: after.id }, "status_change");
@@ -100,6 +106,7 @@ export const accountService = recordService<typeof accounts.$inferSelect, typeof
   input: accountInput,
   search: [accounts.name, accounts.website],
   orderBy: [accounts.name],
+  duplicates: (tx, actor, values) => accountMatches(tx, actor.orgId, values.name, values.website),
   afterDelete: async (tx, actor, row) => {
     const [contact] = await tx
       .select({ id: contacts.id })
@@ -119,6 +126,7 @@ export const contactService = recordService<typeof contacts.$inferSelect, typeof
   input: contactInput,
   search: [contacts.firstName, contacts.lastName, contacts.email, contacts.cellPhone],
   orderBy: [contacts.lastName, contacts.firstName],
+  duplicates: (tx, actor, values) => personMatches(tx, actor.orgId, values.email, ["contact"]),
   validate: async (tx, actor, values) => {
     if (!values.accountId) return;
     const [account] = await tx

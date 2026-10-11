@@ -7,6 +7,8 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    /** The whole error response, for errors that carry details. */
+    public readonly body: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -15,6 +17,7 @@ export class ApiError extends Error {
 const MESSAGES: Record<string, string> = {
   forbidden: "Your role doesn't allow that.",
   not_found: "That record no longer exists.",
+  duplicate: "This looks like a record Bagger already has.",
   invalid_input: "Some of the information entered isn't valid.",
   account_locked: "This account is locked. Ask your admin to update billing.",
   not_signed_in: "Your session has ended. Please sign in again.",
@@ -67,7 +70,7 @@ export function useApi(): Api {
       });
       if (res.status === 204) return undefined as T;
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new ApiError(res.status, data.error ?? "error", describe(data));
+      if (!res.ok) throw new ApiError(res.status, data.error ?? "error", describe(data), data);
       return data as T;
     },
     [authHeaders],

@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { permissionsFor, useApi, useMe } from "@/lib/api";
+import { ApiError, permissionsFor, useApi, useMe } from "@/lib/api";
 import { cn, formatDateTime } from "@/lib/utils";
 
 /**
@@ -78,6 +78,8 @@ export interface RecordPageProps<T extends BaseRecord> {
   describe: (row: T) => string;
   /** When set, clicking a row calls this instead of opening the edit dialog. */
   onRowOpen?: (row: T) => void;
+  /** Extra buttons in the edit dialog for one record, e.g. Convert. Call `close` when done. */
+  recordActions?: (row: T, close: () => void) => ReactNode;
   /** Extra buttons beside "Add", e.g. Import. */
   headerActions?: ReactNode;
   /**
@@ -87,8 +89,15 @@ export interface RecordPageProps<T extends BaseRecord> {
   bulkActions?: (selected: T[], clear: () => void) => ReactNode;
 }
 
+interface DuplicateMatch {
+  type: "lead" | "contact" | "account";
+  id: string;
+  label: string;
+}
+
 interface HistoryEntry {
   id: string;
+  recordType: string;
   action: "create" | "update" | "delete";
   field: string | null;
   oldValue: string | null;
@@ -209,7 +218,9 @@ function History({
     <ol className="max-h-96 space-y-3 overflow-y-auto py-2">
       {data.map((h) => (
         <li key={h.id} className="border-l-2 border-border pl-3 text-sm">
-          {h.action === "update" ? (
+          {h.field === "convertedContactId" ? (
+            <p className="font-medium">Converted from a lead to a contact</p>
+          ) : h.action === "update" ? (
             <p>
               <span className="font-medium">{byName.get(h.field ?? "")?.label ?? h.field}</span>
               {": "}
@@ -220,7 +231,10 @@ function History({
               <span>{show(h.field, h.newValue)}</span>
             </p>
           ) : (
-            <p className="font-medium">{h.action === "create" ? "Created" : "Deleted"}</p>
+            <p className="font-medium">
+              {h.action === "create" ? "Created" : "Deleted"}
+              {h.recordType !== recordType && ` as a ${h.recordType}`}
+            </p>
           )}
           <p className="text-xs text-muted-foreground">
             {h.userName ?? "System"} · {formatDateTime(h.at)}
@@ -245,6 +259,8 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   const [values, setValues] = useState<Values>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Records the server says this new one may duplicate; the user decides.
+  const [duplicates, setDuplicates] = useState<DuplicateMatch[] | null>(null);
 
   const list = useQuery({
     queryKey: [object, q],
@@ -275,6 +291,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       row ? Object.fromEntries(fields.map((f) => [f.name, String(row[f.name] ?? "")])) : blank,
     );
     setFormError(null);
+    setDuplicates(null);
     setConfirmingDelete(false);
     setEditing(target);
   }
@@ -299,11 +316,11 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   };
 
   const save = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (allowDuplicate: boolean) => {
       if (editing === "new") {
         // Leave out blanks so the server applies its defaults.
         const body = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== ""));
-        return api("POST", `/api/${object}`, parsed(body));
+        return api("POST", `/api/${object}${allowDuplicate ? "?allowDuplicate=1" : ""}`, parsed(body));
       }
       const row = editing as unknown as Record<string, unknown>;
       const changed = Object.fromEntries(
@@ -313,7 +330,13 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       return api("PATCH", `/api/${object}/${(editing as T).id}`, parsed(changed));
     },
     onSuccess: done,
-    onError: (e: Error) => setFormError(relabel(e.message)),
+    onError: (e: Error) => {
+      if (e instanceof ApiError && e.code === "duplicate") {
+        setDuplicates((e.body.matches as DuplicateMatch[]) ?? []);
+      } else {
+        setFormError(relabel(e.message));
+      }
+    },
   });
 
   const remove = useMutation({
@@ -334,7 +357,8 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
         setFormError(null);
-        save.mutate();
+        setDuplicates(null);
+        save.mutate(false);
       }}
     >
       {fields.map((field) => (
@@ -494,6 +518,34 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             </Tabs>
           )}
 
+          {duplicates && (
+            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+              <p className="font-medium text-amber-900">
+                This may already be in Bagger:
+              </p>
+              <ul className="mt-1 list-disc pl-5 text-amber-900">
+                {duplicates.map((d) => (
+                  <li key={d.id}>
+                    {d.label} ({d.type})
+                  </li>
+                ))}
+              </ul>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                disabled={busy}
+                onClick={() => {
+                  setDuplicates(null);
+                  save.mutate(true);
+                }}
+              >
+                Create {singular} anyway
+              </Button>
+            </div>
+          )}
+
           {formError && (
             <p role="alert" className="text-sm text-destructive">
               {formError}
@@ -501,7 +553,8 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
           )}
 
           <DialogFooter className="sm:justify-between">
-            <div>
+            <div className="flex items-center gap-2">
+              {current && props.recordActions?.(current, () => setEditing(null))}
               {current &&
                 can.canDelete(current.ownerId) &&
                 (confirmingDelete ? (

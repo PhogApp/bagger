@@ -367,6 +367,240 @@ describe("accounts and contacts", () => {
   });
 });
 
+describe("flagging duplicates when a record is added", () => {
+  it("stops a lead whose email is already a lead or a contact, unless told to go ahead", async () => {
+    const account = (await as(rep).post("/api/accounts", { name: "Dupe Check Co" })).body;
+    await as(rep).post("/api/contacts", {
+      firstName: "Cora",
+      lastName: "Contact",
+      email: "cora@dupecheck.example",
+      accountId: account.id,
+    });
+    const first = await as(rep).post("/api/leads", newLead({ email: "lee@dupecheck.example" }));
+    expect(first.status).toBe(201);
+
+    const asContact = await as(rep2).post(
+      "/api/leads",
+      newLead({ email: "CORA@dupecheck.example" }),
+    );
+    expect(asContact.status).toBe(409);
+    expect(asContact.body).toMatchObject({
+      error: "duplicate",
+      matches: [{ type: "contact", label: "Cora Contact, Dupe Check Co" }],
+    });
+    const asLead = await as(rep2).post("/api/leads", newLead({ email: "lee@dupecheck.example" }));
+    expect(asLead.status).toBe(409);
+    expect(asLead.body.matches[0]).toMatchObject({ type: "lead", id: first.body.id });
+
+    const anyway = await as(rep2).post(
+      "/api/leads?allowDuplicate=1",
+      newLead({ email: "lee@dupecheck.example" }),
+    );
+    expect(anyway.status).toBe(201);
+    // Another organization's records are never a match.
+    const elsewhere = await as(outsider).post(
+      "/api/leads",
+      newLead({ email: "cora@dupecheck.example" }),
+    );
+    expect(elsewhere.status).toBe(201);
+  });
+
+  it("stops a second contact with the same email, or account with the same name or website", async () => {
+    const account = await as(rep).post("/api/accounts", {
+      name: "Marlow Tooling",
+      website: "marlow.example",
+    });
+    expect(account.status).toBe(201);
+    const sameName = await as(rep).post("/api/accounts", { name: "marlow  tooling" });
+    expect(sameName.status).toBe(409);
+    const sameSite = await as(rep).post("/api/accounts", {
+      name: "Marlow Inc",
+      website: "https://www.marlow.example/contact",
+    });
+    expect(sameSite.body.matches).toEqual([
+      { type: "account", id: account.body.id, label: "Marlow Tooling" },
+    ]);
+
+    const contact = { firstName: "Max", lastName: "M", email: "max@marlow.example", accountId: account.body.id };
+    expect((await as(rep).post("/api/contacts", contact)).status).toBe(201);
+    expect((await as(rep).post("/api/contacts", contact)).status).toBe(409);
+  });
+
+  it("flags imported leads that are already contacts, and never overwrites the contact", async () => {
+    const account = (await as(rep).post("/api/accounts", { name: "Import Dupe Co" })).body;
+    const contact = (
+      await as(rep).post("/api/contacts", {
+        firstName: "Ivy",
+        lastName: "Original",
+        email: "ivy@importdupe.example",
+        accountId: account.id,
+      })
+    ).body;
+    const rows = [
+      { firstName: "Ivy", lastName: "Changed", email: "ivy@importdupe.example" },
+      { firstName: "Jon", lastName: "New", email: "jon@importdupe.example" },
+    ];
+    const check = await as(rep).post("/api/import/leads", { rows, mode: "check" });
+    expect(check.body).toMatchObject({
+      created: 1,
+      duplicates: [{ row: 1, label: "ivy@importdupe.example", existing: "contact" }],
+    });
+    const res = await as(rep).post("/api/import/leads", { rows, mode: "update" });
+    expect(res.body).toMatchObject({ created: 1, updated: 0 });
+    expect((await as(rep).get(`/api/contacts/${contact.id}`)).body.lastName).toBe("Original");
+    expect((await as(rep).get("/api/leads?q=ivy@importdupe")).body).toHaveLength(0);
+  });
+});
+
+describe("converting a lead to a contact", () => {
+  async function sequenceWithTwoSteps(name: string) {
+    const sequence = (await as(rep).post("/api/sequences", { name })).body;
+    await as(rep).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "One" });
+    await as(rep).post(`/api/sequences/${sequence.id}/steps`, { type: "phone_call", title: "Two" });
+    return sequence;
+  }
+
+  it("keeps the person's sequence, history and details, on a new account", async () => {
+    const sequence = await sequenceWithTwoSteps("Convert mid-sequence");
+    const lead = (
+      await as(rep).post(
+        "/api/leads",
+        newLead({
+          firstName: "Gwen",
+          lastName: "Convert",
+          email: "gwen@harborline.example",
+          company: "Harborline Marine",
+          title: "Buyer",
+          cellPhone: "555-0177",
+        }),
+      )
+    ).body;
+    await as(rep2).patch(`/api/leads/${lead.id}`, { status: "Prospecting" });
+    const enrolled = (
+      await as(rep).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: lead.id })
+    ).body;
+    await as(rep).post(`/api/tasks/${enrolled.task.id}/complete`, {});
+
+    const preview = (await as(rep).get(`/api/leads/${lead.id}/conversion`)).body;
+    expect(preview).toMatchObject({
+      suggestedAccountName: "Harborline Marine",
+      suggestedWebsite: "harborline.example",
+      matches: [],
+      existingContact: null,
+      canCreateAccount: true,
+    });
+
+    const res = await as(rep2).post(`/api/leads/${lead.id}/convert`, {
+      newAccount: { name: "Harborline Marine", website: "harborline.example" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ accountCreated: true, enrollments: 1 });
+
+    const contact = (await as(rep).get(`/api/contacts/${res.body.contactId}`)).body;
+    expect(contact).toMatchObject({
+      firstName: "Gwen",
+      lastName: "Convert",
+      email: "gwen@harborline.example",
+      title: "Buyer",
+      cellPhone: "555-0177",
+      status: "Prospecting",
+      ownerId: rep.userId, // the lead's owner, not whoever converted it
+      accountId: res.body.accountId,
+    });
+    const account = (await as(rep).get(`/api/accounts/${res.body.accountId}`)).body;
+    expect(account).toMatchObject({ name: "Harborline Marine", website: "https://harborline.example" });
+
+    // The sequence carries on from step two, now for the contact.
+    const due = (await as(rep).get("/api/tasks/due")).body;
+    const task = due.find((t: { person: { contactId: string } }) => t.person.contactId === contact.id);
+    expect(task).toMatchObject({ step: { title: "Two" }, person: { leadId: null } });
+    const people = (await as(rep).get(`/api/sequences/${sequence.id}/enrollments`)).body;
+    expect(people).toHaveLength(1);
+    expect(people[0]).toMatchObject({ contactId: contact.id, leadId: null, state: "active" });
+    const done = await as(rep).post(`/api/tasks/${task.taskId}/complete`, {});
+    expect(done.status).toBe(200);
+
+    // The lead leaves the list, can't be changed, and can't be enrolled again.
+    expect((await as(rep).get("/api/leads?q=harborline")).body).toHaveLength(0);
+    expect((await as(rep).patch(`/api/leads/${lead.id}`, { title: "X" })).status).toBe(400);
+    expect((await as(rep).post(`/api/leads/${lead.id}/convert`, { accountId: account.id })).status).toBe(400);
+    const again = await as(rep).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: lead.id });
+    expect(again.status).toBe(409);
+
+    // The contact's history includes what happened while it was a lead.
+    const history = (await as(rep).get(`/api/history/contact/${contact.id}`)).body;
+    const fields = history.map((h: { recordType: string; action: string; field: string | null }) =>
+      [h.recordType, h.action, h.field].join(":"),
+    );
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        "contact:create:",
+        "lead:update:convertedContactId",
+        "lead:update:status",
+        "lead:create:",
+      ]),
+    );
+    const converted = history.find((h: { field: string }) => h.field === "convertedContactId");
+    expect(converted).toMatchObject({ newValue: contact.id, userId: rep2.userId });
+
+    // The email is free for the contact only: a new lead with it is flagged.
+    const relead = await as(rep).post("/api/leads", newLead({ email: "gwen@harborline.example" }));
+    expect(relead.body.matches).toMatchObject([{ type: "contact", id: contact.id }]);
+  });
+
+  it("suggests matching accounts and attaches to the one chosen", async () => {
+    const byName = (await as(rep).post("/api/accounts", { name: "Kestrel Labs" })).body;
+    const bySite = (
+      await as(rep).post("/api/accounts", { name: "Kestrel Holdings", website: "kestrel.example" })
+    ).body;
+    const lead = (
+      await as(rep).post(
+        "/api/leads",
+        newLead({ email: "kim@kestrel.example", company: "kestrel labs" }),
+      )
+    ).body;
+    const preview = (await as(rep).get(`/api/leads/${lead.id}/conversion`)).body;
+    expect(preview.matches).toEqual([
+      { id: byName.id, name: "Kestrel Labs" },
+      { id: bySite.id, name: "Kestrel Holdings" },
+    ]);
+
+    // Naming a new account that already exists is refused; so is another organization's account.
+    const clash = await as(rep).post(`/api/leads/${lead.id}/convert`, {
+      newAccount: { name: "Kestrel Labs" },
+    });
+    expect(clash.status).toBe(400);
+    const foreign = (await as(outsider).post("/api/accounts", { name: "Foreign Co" })).body;
+    expect((await as(rep).post(`/api/leads/${lead.id}/convert`, { accountId: foreign.id })).status).toBe(400);
+    expect((await as(rep).post(`/api/leads/${lead.id}/convert`, {})).status).toBe(400);
+    expect((await as(outsider).post(`/api/leads/${lead.id}/convert`, { accountId: foreign.id })).status).toBe(404);
+
+    const res = await as(rep).post(`/api/leads/${lead.id}/convert`, { accountId: bySite.id });
+    expect(res.body).toMatchObject({ accountId: bySite.id, accountCreated: false, enrollments: 0 });
+    // A personal email address suggests no website.
+    const personal = (await as(rep).post("/api/leads", newLead({ email: "someone@gmail.com", company: "" }))).body;
+    const none = (await as(rep).get(`/api/leads/${personal.id}/conversion`)).body;
+    expect(none).toMatchObject({ suggestedWebsite: null, matches: [] });
+  });
+
+  it("refuses when the email is already a contact, and for a read-only user", async () => {
+    const account = (await as(rep).post("/api/accounts", { name: "Already There Co" })).body;
+    const lead = (await as(rep).post("/api/leads", newLead({ email: "amy@alreadythere.example" }))).body;
+    expect((await as(viewer).post(`/api/leads/${lead.id}/convert`, { accountId: account.id })).status).toBe(403);
+    await as(rep).post("/api/contacts", {
+      firstName: "Amy",
+      lastName: "There",
+      email: "amy@alreadythere.example",
+      accountId: account.id,
+    });
+    const preview = (await as(rep).get(`/api/leads/${lead.id}/conversion`)).body;
+    expect(preview.existingContact).toBe("Amy There, Already There Co");
+    const res = await as(rep).post(`/api/leads/${lead.id}/convert`, { accountId: account.id });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/already a contact/);
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;

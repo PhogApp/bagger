@@ -1,6 +1,7 @@
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
+import { ConvertLeadButton } from "@/components/ConvertLead";
 import { ImportButton } from "@/components/ImportRecords";
 import { canUse, permissionsFor, useMe, useOrgUsers } from "@/lib/api";
 import { formatPhone } from "@/lib/utils";
@@ -85,6 +86,12 @@ export function LeadsPage() {
               <BulkEnrollButton kind="leads" people={selected} onDone={clear} />
             )
           : undefined
+      }
+      recordActions={(lead, close) =>
+        permissionsFor(me, "leads").canEdit(lead.ownerId) &&
+        permissionsFor(me, "contacts").canCreate ? (
+          <ConvertLeadButton lead={lead} onDone={close} />
+        ) : null
       }
       describe={(l) => `${l.firstName} ${l.lastName}`}
     />

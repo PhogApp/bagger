@@ -16,6 +16,7 @@ Foundation slice. What exists today:
 
 | Record API | `server/records/`, `server/http/app.ts` | Leads, contacts, accounts, templates, sequences: permission-checked, org-scoped, audited |
 | Sequence API | `server/sequences/service.ts` | Steps, reorder, enroll one person or many at once, pause, stop, the Run Steps queue, per-person message edits |
+| Duplicates and conversion | `server/records/duplicates.ts`, `server/records/convert.ts` | One definition of "already in Bagger" (people by email across leads and contacts, accounts by name or website), flagged when a record is added or imported; converting a lead to a contact on a chosen account, keeping its sequence and history |
 | CSV import | `server/records/import.ts`, `client/src/components/ImportRecords.tsx` | Leads, contacts and accounts from a CSV file: sample file download, column matching in the browser, a check for records already in Bagger (people by email, accounts by name or website) before anything is saved, then skip or overwrite them; bad rows reported by line |
 
 | Sign-in | `server/auth/clerk.ts`, `server/auth/identity.ts` | Clerk session to Bagger user, organization and role; first sign-in creates them |
@@ -23,7 +24,7 @@ Foundation slice. What exists today:
 | Web client | `client/` | Sign-in, organization picker, app layout, and screens for Leads, Contacts, Accounts, Templates, Sequences (steps, people, enrolling), Run Steps, personal Settings, Admin (wait-day rule, users and roles) and the owner's Organization page |
 | Hosting | `render.yaml` | Render Blueprint for the staging web service and database |
 
-Not built yet: a dashboard, lead conversion, the opportunity pipeline, reporting, and billing. Messages are plain text; rich text is not yet supported.
+Not built yet: a dashboard, the opportunity pipeline, reporting, and billing. Messages are plain text; rich text is not yet supported.
 
 ## Sequence rules
 
