@@ -759,6 +759,148 @@ describe("status lists an organization defines for itself", () => {
   });
 });
 
+describe("the opportunity pipeline", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  let watcher: Ctx;
+  let account: { id: string };
+  let contact: { id: string };
+  const stages = async () =>
+    (await as(boss).get("/api/statuses")).body.filter(
+      (o: { object: string }) => o.object === "opportunities",
+    ) as { id: string; name: string; probability: number | null; inUse: number }[];
+
+  beforeAll(async () => {
+    boss = await createOrg(db);
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    watcher = await addMember(db, boss.orgId, "read_only", "Wes Watcher");
+    account = (await as(seller).post("/api/accounts", { name: "Pipeline Co" })).body;
+    contact = (
+      await as(seller).post("/api/contacts", {
+        firstName: "Pat",
+        lastName: "Buyer",
+        email: "pat@pipeline.example",
+        accountId: account.id,
+      })
+    ).body;
+  });
+
+  it("creates an opportunity in the default stage and tidies what was typed", async () => {
+    const res = await as(seller).post("/api/opportunities", {
+      name: "ERP rollout",
+      accountId: account.id,
+      contactId: contact.id,
+      amount: "$12,500",
+      closeDate: "2026-12-15",
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      name: "ERP rollout",
+      status: "Prospecting",
+      amount: "12500.00",
+      closeDate: "2026-12-15",
+      ownerId: seller.userId,
+      closedAt: null,
+    });
+    expect((await stages()).map((s) => s.probability)).toEqual([10, 25, 50, 75, 100, 0]);
+
+    const bad = { name: "Bad", accountId: account.id };
+    expect((await as(seller).post("/api/opportunities", { ...bad, amount: "lots" })).status).toBe(400);
+    expect((await as(seller).post("/api/opportunities", { ...bad, closeDate: "12/15/2026" })).status).toBe(400);
+    expect((await as(seller).post("/api/opportunities", { ...bad, status: "Made Up" })).status).toBe(400);
+    expect((await as(seller).post("/api/opportunities", { name: "No account" })).status).toBe(400);
+    expect((await as(watcher).post("/api/opportunities", bad)).status).toBe(403);
+    // The main contact must be at the same account, and in the same organization.
+    const other = (await as(seller).post("/api/accounts", { name: "Other Pipeline Co" })).body;
+    const wrong = await as(seller).post("/api/opportunities", {
+      name: "Wrong contact",
+      accountId: other.id,
+      contactId: contact.id,
+    });
+    expect(wrong.status).toBe(400);
+    const foreign = (await as(outsider).post("/api/accounts", { name: "Foreign Pipeline" })).body;
+    expect((await as(seller).post("/api/opportunities", { name: "X", accountId: foreign.id })).status).toBe(400);
+    expect((await as(seller).get("/api/opportunities")).body).toHaveLength(1);
+    expect((await as(outsider).get("/api/opportunities")).body).toHaveLength(0);
+  });
+
+  it("records each stage move, and closes and reopens the deal", async () => {
+    const opp = (
+      await as(seller).post("/api/opportunities", { name: "Stage moves", accountId: account.id, amount: 4000 })
+    ).body;
+    await as(seller).patch(`/api/opportunities/${opp.id}`, { status: "proposal", amount: "6000" });
+    const won = await as(boss).patch(`/api/opportunities/${opp.id}`, { status: "Closed Won" });
+    expect(won.status).toBe(200);
+    let now = (await as(seller).get(`/api/opportunities/${opp.id}`)).body;
+    expect(now.status).toBe("Closed Won");
+    expect(now.closedAt).not.toBeNull();
+
+    const moves = await db
+      .select()
+      .from(s.opportunityStageHistory)
+      .where(eq(s.opportunityStageHistory.opportunityId, opp.id))
+      .orderBy(s.opportunityStageHistory.changedAt);
+    expect(moves.map((m) => [m.fromStage, m.toStage, m.amount, m.changedBy])).toEqual([
+      [null, "Prospecting", "4000.00", seller.userId],
+      ["Prospecting", "Proposal", "6000.00", seller.userId],
+      ["Proposal", "Closed Won", "6000.00", boss.userId],
+    ]);
+    const history = (await as(seller).get(`/api/history/opportunity/${opp.id}`)).body;
+    expect(history.filter((h: { field: string }) => h.field === "status")).toHaveLength(2);
+
+    await as(seller).patch(`/api/opportunities/${opp.id}`, { status: "Negotiation" });
+    now = (await as(seller).get(`/api/opportunities/${opp.id}`)).body;
+    expect(now.closedAt).toBeNull();
+    // Clearing the amount and date is allowed.
+    const cleared = await as(seller).patch(`/api/opportunities/${opp.id}`, { amount: "", closeDate: "" });
+    expect(cleared.body).toMatchObject({ amount: null, closeDate: null });
+  });
+
+  it("follows stages that an admin renames, re-rates or deletes", async () => {
+    const opp = (
+      await as(seller).post("/api/opportunities", { name: "Renamed stage", accountId: account.id, status: "Qualified" })
+    ).body;
+    const all = await stages();
+    const qualified = all.find((s) => s.name === "Qualified")!;
+    const lost = all.find((s) => s.name === "Closed Lost")!;
+    expect(qualified.inUse).toBe(1);
+
+    const renamed = await as(boss).patch(`/api/statuses/${qualified.id}`, { name: "Discovery", probability: 30 });
+    expect(renamed.status).toBe(200);
+    expect((await stages()).find((s) => s.id === qualified.id)).toMatchObject({ name: "Discovery", probability: 30 });
+    expect((await as(seller).get(`/api/opportunities/${opp.id}`)).body.status).toBe("Discovery");
+    expect((await as(boss).patch(`/api/statuses/${qualified.id}`, { probability: 150 })).status).toBe(400);
+    const leadNew = (await as(boss).get("/api/statuses")).body.find(
+      (o: { object: string; name: string }) => o.object === "leads" && o.name === "New",
+    );
+    expect((await as(boss).patch(`/api/statuses/${leadNew.id}`, { probability: 50 })).status).toBe(400);
+
+    // Deleting the stage moves its deals to the replacement, here a closed one.
+    expect((await as(boss).del(`/api/statuses/${qualified.id}?replaceWith=${lost.id}`)).status).toBe(200);
+    const after = (await as(seller).get(`/api/opportunities/${opp.id}`)).body;
+    expect(after.status).toBe("Closed Lost");
+    expect(after.closedAt).not.toBeNull();
+    const moves = await db
+      .select()
+      .from(s.opportunityStageHistory)
+      .where(eq(s.opportunityStageHistory.opportunityId, opp.id))
+      .orderBy(s.opportunityStageHistory.changedAt);
+    expect(moves.map((m) => [m.fromStage, m.toStage])).toEqual([
+      [null, "Discovery"],
+      ["Discovery", "Closed Lost"],
+    ]);
+  });
+
+  it("lets a rep edit but not delete, and protects an account that has opportunities", async () => {
+    const opp = (await as(boss).post("/api/opportunities", { name: "Owned by boss", accountId: account.id })).body;
+    expect((await as(seller).patch(`/api/opportunities/${opp.id}`, { notes: "Called" })).status).toBe(200);
+    expect((await as(seller).del(`/api/opportunities/${opp.id}`)).status).toBe(403);
+    expect((await as(boss).del(`/api/accounts/${account.id}`)).status).toBe(400);
+    expect((await as(boss).del(`/api/opportunities/${opp.id}`)).status).toBe(204);
+    expect((await as(outsider).get(`/api/opportunities/${opp.id}`)).status).toBe(404);
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;

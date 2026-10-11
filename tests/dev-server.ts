@@ -15,6 +15,7 @@ import {
   accountService,
   contactService,
   leadService,
+  opportunityService,
   sequenceService,
   templateService,
 } from "../server/records";
@@ -33,8 +34,8 @@ const phog = await accountService.create(db, admin, {
   name: "Phog, Inc.",
   website: "https://phog.example",
 });
-await accountService.create(db, admin, { name: "Test Company", status: "Customer" });
-await contactService.create(db, admin, {
+const testCo = await accountService.create(db, admin, { name: "Test Company", status: "Customer" });
+const dan = await contactService.create(db, admin, {
   firstName: "Dan",
   lastName: "Smith",
   title: "CEO",
@@ -42,6 +43,23 @@ await contactService.create(db, admin, {
   accountId: phog.id,
   status: "Prospecting",
 });
+const deals: [string, string, string | null, string, string][] = [
+  ["NetSuite implementation", phog.id, "48000", "Proposal", "2026-11-20"],
+  ["Support renewal", testCo.id, "9600", "Negotiation", "2026-10-30"],
+  ["Warehouse module", testCo.id, "22500", "Prospecting", "2026-12-15"],
+  ["Reporting add-on", phog.id, null, "Qualified", "2027-01-10"],
+  ["Year-one licences", phog.id, "31000", "Closed Won", "2026-10-02"],
+];
+for (const [i, [name, accountId, amount, status, closeDate]] of deals.entries()) {
+  await opportunityService.create(db, i % 2 ? rep : admin, {
+    name,
+    accountId,
+    amount,
+    status,
+    closeDate,
+    contactId: accountId === phog.id ? dan.id : undefined,
+  });
+}
 const people = [
   ["Jeremy", "Gonnon", "Director, Service Delivery", "Secured Retail Networks", ""],
   ["Preston", "Strait", "VP IT", "Secured Retail Networks", "9493906714"],

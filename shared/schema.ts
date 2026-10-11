@@ -6,6 +6,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
@@ -132,6 +133,8 @@ export const statusOptions = pgTable(
     isDefault: boolean("is_default").notNull().default(false),
     effect: text("effect").$type<StatusEffect>().notNull().default("none"),
     color: text("color").$type<StatusColor>().notNull().default("neutral"),
+    /** Opportunities only: the chance of winning at this stage, 0 to 100. */
+    probability: integer("probability"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -271,6 +274,64 @@ export const contacts = pgTable(
     index("contacts_org_idx").on(t.orgId),
     index("contacts_org_email_idx").on(t.orgId, t.email),
   ],
+);
+
+// ------------------------------------------------------------- pipeline
+
+export const opportunities = pgTable(
+  "opportunities",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    /** The main person on the deal, if one is named. */
+    contactId: uuid("contact_id").references(() => contacts.id),
+    name: text("name").notNull(),
+    amount: numeric("amount", { precision: 14, scale: 2 }),
+    /** Expected close date, a calendar date. */
+    closeDate: date("close_date"),
+    /** The pipeline stage: one of the organization's opportunity statuses. */
+    status: text("status").notNull(),
+    notes: text("notes"),
+    /** Set while the stage is a won or lost one; null while the deal is open. */
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    deletedAt: deletedAt(),
+  },
+  (t) => [
+    index("opportunities_org_idx").on(t.orgId),
+    index("opportunities_account_idx").on(t.accountId),
+  ],
+);
+
+/** One row each time an opportunity enters a stage, for conversion and velocity reports. */
+export const opportunityStageHistory = pgTable(
+  "opportunity_stage_history",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    opportunityId: uuid("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    /** Null for the stage the opportunity was created in. */
+    fromStage: text("from_stage"),
+    toStage: text("to_stage").notNull(),
+    /** The amount at the moment of the move. */
+    amount: numeric("amount", { precision: 14, scale: 2 }),
+    changedBy: uuid("changed_by").references(() => users.id),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("opportunity_stage_history_opp_idx").on(t.opportunityId, t.changedAt)],
 );
 
 export const doNotContact = pgTable(

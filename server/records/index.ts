@@ -4,6 +4,8 @@ import {
   accounts,
   contacts,
   leads,
+  opportunities,
+  opportunityStageHistory,
   sequences,
   templateTypeEnum,
   templates,
@@ -64,6 +66,46 @@ export const accountInput = z.object({
   status,
   ownerId,
 });
+/** Money as typed ("12,500", "$12500.50") or as a number; stored with two decimals. */
+const optionalAmount = z
+  .union([z.number(), z.string()])
+  .transform((v, ctx) => {
+    if (typeof v === "string" && v.trim() === "") return null;
+    const amount = typeof v === "number" ? v : Number(v.replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(amount) || amount < 0 || amount >= 1e12) {
+      ctx.addIssue({ code: "custom", message: "Enter an amount such as 12500" });
+      return z.NEVER;
+    }
+    return amount.toFixed(2);
+  })
+  .nullable()
+  .optional();
+const optionalDate = z
+  .string()
+  .trim()
+  .transform((v) => (v === "" ? null : v))
+  .refine((v) => v === null || (/^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v))), {
+    message: "Pick a valid date",
+  })
+  .nullable()
+  .optional();
+const optionalId = z
+  .union([z.uuid(), z.literal("")])
+  .transform((v) => (v === "" ? null : v))
+  .nullable()
+  .optional();
+
+export const opportunityInput = z.object({
+  name: text,
+  accountId: z.uuid(),
+  contactId: optionalId,
+  amount: optionalAmount,
+  closeDate: optionalDate,
+  /** The pipeline stage. */
+  status,
+  notes: optionalText,
+  ownerId,
+});
 export const templateInput = z.object({
   name: text,
   type: z.enum(templateTypeEnum.enumValues).optional(),
@@ -112,6 +154,14 @@ export const accountService = recordService<typeof accounts.$inferSelect, typeof
   orderBy: [accounts.name],
   duplicates: (tx, actor, values) => accountMatches(tx, actor.orgId, values.name, values.website),
   afterDelete: async (tx, actor, row) => {
+    const [opportunity] = await tx
+      .select({ id: opportunities.id })
+      .from(opportunities)
+      .where(and(eq(opportunities.accountId, row.id), isNull(opportunities.deletedAt)))
+      .limit(1);
+    if (opportunity) {
+      throw new ValidationError("This account still has opportunities. Delete them first.");
+    }
     const [contact] = await tx
       .select({ id: contacts.id })
       .from(contacts)
@@ -154,6 +204,103 @@ export const contactService = recordService<typeof contacts.$inferSelect, typeof
   },
   afterDelete: async (tx, actor, row) => {
     await stopForPerson(tx, actor, { contactId: row.id }, "removed");
+  },
+});
+
+/** True when the stage is one of the organization's won or lost stages. */
+async function isClosedStage(tx: Parameters<typeof statusEffect>[0], orgId: string, stage: string) {
+  const effect = await statusEffect(tx, orgId, "opportunities", stage);
+  return effect === "won" || effect === "lost";
+}
+
+/** The main contact has to be someone at the opportunity's account. */
+async function checkContactOnAccount(
+  tx: Parameters<typeof statusEffect>[0],
+  opportunity: { contactId: string | null; accountId: string },
+) {
+  if (!opportunity.contactId) return;
+  const [contact] = await tx
+    .select({ accountId: contacts.accountId })
+    .from(contacts)
+    .where(eq(contacts.id, opportunity.contactId));
+  if (contact?.accountId !== opportunity.accountId) {
+    throw new ValidationError("That contact belongs to a different account");
+  }
+}
+
+export const opportunityService = recordService<
+  typeof opportunities.$inferSelect,
+  typeof opportunityInput
+>({
+  table: opportunities,
+  object: "opportunities",
+  recordType: "opportunity",
+  statusObject: "opportunities",
+  input: opportunityInput,
+  search: [opportunities.name],
+  orderBy: [opportunities.closeDate, opportunities.name],
+  validate: async (tx, actor, values) => {
+    if (values.accountId) {
+      const [account] = await tx
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(
+          and(
+            eq(accounts.id, values.accountId),
+            eq(accounts.orgId, actor.orgId),
+            isNull(accounts.deletedAt),
+          ),
+        );
+      if (!account) throw new ValidationError("Account not found");
+    }
+    if (values.contactId) {
+      const [contact] = await tx
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.id, values.contactId),
+            eq(contacts.orgId, actor.orgId),
+            isNull(contacts.deletedAt),
+          ),
+        );
+      if (!contact) throw new ValidationError("Contact not found");
+    }
+  },
+  afterCreate: async (tx, actor, row) => {
+    await checkContactOnAccount(tx, row);
+    await tx.insert(opportunityStageHistory).values({
+      orgId: actor.orgId,
+      opportunityId: row.id,
+      toStage: row.status,
+      amount: row.amount,
+      changedBy: actor.userId,
+    });
+    if (await isClosedStage(tx, actor.orgId, row.status)) {
+      await tx.update(opportunities).set({ closedAt: new Date() }).where(eq(opportunities.id, row.id));
+    }
+  },
+  afterUpdate: async (tx, actor, before, after) => {
+    if (before.contactId !== after.contactId || before.accountId !== after.accountId) {
+      await checkContactOnAccount(tx, after);
+    }
+    if (before.status === after.status) return;
+    await tx.insert(opportunityStageHistory).values({
+      orgId: actor.orgId,
+      opportunityId: after.id,
+      fromStage: before.status,
+      toStage: after.status,
+      amount: after.amount,
+      changedBy: actor.userId,
+    });
+    // Closed while in a won or lost stage; reopened when moved back out.
+    const closed = await isClosedStage(tx, actor.orgId, after.status);
+    if (closed !== Boolean(before.closedAt)) {
+      await tx
+        .update(opportunities)
+        .set({ closedAt: closed ? new Date() : null })
+        .where(eq(opportunities.id, after.id));
+    }
   },
 });
 

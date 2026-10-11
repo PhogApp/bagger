@@ -1,9 +1,11 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   accounts,
   contacts,
   leads,
+  opportunities,
+  opportunityStageHistory,
   STATUS_COLORS,
   STATUS_EFFECTS,
   STATUS_OBJECTS,
@@ -28,11 +30,14 @@ import { DEFAULT_STATUSES } from "./defaults";
  * replacement. Both write a history entry per record, in the same transaction.
  */
 
-/** The tables that carry a status today. Opportunities join when the pipeline is built. */
-const TABLES = { leads, contacts, accounts } as const;
-const RECORD_TYPE = { leads: "lead", contacts: "contact", accounts: "account" } as const;
-type RecordObject = keyof typeof TABLES;
-const hasRecords = (object: StatusObject): object is RecordObject => object in TABLES;
+/** The table that carries each kind of status. */
+const TABLES = { leads, contacts, accounts, opportunities } as const;
+const RECORD_TYPE = {
+  leads: "lead",
+  contacts: "contact",
+  accounts: "account",
+  opportunities: "opportunity",
+} as const;
 
 /** Which effects make sense for which kind of record. */
 const EFFECTS: Record<StatusObject, StatusEffect[]> = {
@@ -57,6 +62,7 @@ export async function seedStatusOptions(tx: Db, orgId: string): Promise<void> {
       isDefault: i === 0,
       effect: status.effect ?? ("none" as const),
       color: status.color,
+      probability: status.probability ?? null,
     })),
   );
   await tx.insert(statusOptions).values(rows);
@@ -128,7 +134,7 @@ export async function listStatuses(db: Db, actor: Actor) {
     .where(eq(statusOptions.orgId, actor.orgId))
     .orderBy(asc(statusOptions.object), asc(statusOptions.position));
   const inUse = new Map<string, number>();
-  for (const object of Object.keys(TABLES) as RecordObject[]) {
+  for (const object of STATUS_OBJECTS) {
     const table = TABLES[object];
     const counts = await db
       .select({ status: table.status, n: sql<number>`count(*)::int` })
@@ -145,6 +151,7 @@ export async function listStatuses(db: Db, actor: Actor) {
     isDefault: r.isDefault,
     effect: r.effect,
     color: r.color,
+    probability: r.probability,
     /** Records with this status, including deleted ones, which keep it. */
     inUse: inUse.get(`${r.object}:${r.name}`) ?? 0,
   }));
@@ -162,6 +169,8 @@ export const updateStatusInput = z
     name,
     effect: z.enum(STATUS_EFFECTS),
     color: z.enum(STATUS_COLORS),
+    /** Opportunity stages only: the chance of winning, 0 to 100. */
+    probability: z.number().int().min(0).max(100).nullable(),
     /** Only `true` is accepted: the default moves when another status takes it. */
     isDefault: z.literal(true),
   })
@@ -201,7 +210,7 @@ async function moveRecords(
   from: string,
   to: string,
 ): Promise<string[]> {
-  if (!hasRecords(object) || from === to) return [];
+  if (from === to) return [];
   const table = TABLES[object];
   await tx.execute(sql`
     insert into field_history (org_id, record_type, record_id, action, field, old_value, new_value, source, user_id)
@@ -246,6 +255,9 @@ export async function updateStatus(db: Db, actor: Actor, id: string, raw: unknow
   await db.transaction(async (tx) => {
     const before = await loadOption(tx, actor, id);
     checkEffect(before.object, patch.effect);
+    if (patch.probability != null && before.object !== "opportunities") {
+      throw new ValidationError("Only opportunity stages have a probability");
+    }
     if (patch.name !== undefined) await checkNameFree(tx, actor.orgId, before.object, patch.name, id);
     const changes = diffFields(before, patch);
     if (changes.length === 0) return;
@@ -262,6 +274,31 @@ export async function updateStatus(db: Db, actor: Actor, id: string, raw: unknow
     await recordUpdate(tx, actor, "status_option", id, changes);
     if (patch.name !== undefined) {
       await moveRecords(tx, actor, before.object, before.name, patch.name);
+      if (before.object === "opportunities") {
+        // The stage is the same stage under a new name, so past moves follow it.
+        const mine = eq(opportunityStageHistory.orgId, actor.orgId);
+        await tx
+          .update(opportunityStageHistory)
+          .set({ toStage: patch.name })
+          .where(and(mine, eq(opportunityStageHistory.toStage, before.name)));
+        await tx
+          .update(opportunityStageHistory)
+          .set({ fromStage: patch.name })
+          .where(and(mine, eq(opportunityStageHistory.fromStage, before.name)));
+      }
+    }
+    if (patch.effect !== undefined && before.object === "opportunities") {
+      // A stage that becomes (or stops being) a closed one closes or reopens its deals.
+      const closed = patch.effect === "won" || patch.effect === "lost";
+      await tx
+        .update(opportunities)
+        .set({ closedAt: closed ? sql`coalesce(${opportunities.closedAt}, now())` : null })
+        .where(
+          and(
+            eq(opportunities.orgId, actor.orgId),
+            eq(opportunities.status, patch.name ?? before.name),
+          ),
+        );
     }
   });
   return listStatuses(db, actor);
@@ -305,15 +342,11 @@ export async function deleteStatus(db: Db, actor: Actor, id: string, raw: unknow
     if (option.isDefault) {
       throw new ValidationError("Make another status the default before deleting this one");
     }
-    let inUse = 0;
-    if (hasRecords(option.object)) {
-      const table = TABLES[option.object];
-      const [row] = await tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(table)
-        .where(and(eq(table.orgId, actor.orgId), eq(table.status, option.name)));
-      inUse = row.n;
-    }
+    const table = TABLES[option.object];
+    const [{ n: inUse }] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(table)
+      .where(and(eq(table.orgId, actor.orgId), eq(table.status, option.name)));
     if (inUse > 0) {
       if (!replaceWith || replaceWith === id) {
         throw new ValidationError(
@@ -325,7 +358,28 @@ export async function deleteStatus(db: Db, actor: Actor, id: string, raw: unknow
       const target = await loadOption(tx, actor, replaceWith);
       if (target.object !== option.object) throw new ValidationError("Choose a status from the same list");
       const moved = await moveRecords(tx, actor, option.object, option.name, target.name);
-      if (target.effect === "ends_sequence" || target.effect === "do_not_contact") {
+      if (option.object === "opportunities" && moved.length > 0) {
+        // Each deal moved stage: log it, and close or reopen it to match.
+        const rows = await tx
+          .select({ id: opportunities.id, amount: opportunities.amount })
+          .from(opportunities)
+          .where(inArray(opportunities.id, moved));
+        await tx.insert(opportunityStageHistory).values(
+          rows.map((r) => ({
+            orgId: actor.orgId,
+            opportunityId: r.id,
+            fromStage: option.name,
+            toStage: target.name,
+            amount: r.amount,
+            changedBy: actor.userId,
+          })),
+        );
+        const closed = target.effect === "won" || target.effect === "lost";
+        await tx
+          .update(opportunities)
+          .set({ closedAt: closed ? sql`coalesce(${opportunities.closedAt}, now())` : null })
+          .where(inArray(opportunities.id, moved));
+      } else if (target.effect === "ends_sequence" || target.effect === "do_not_contact") {
         for (const personId of moved) {
           const ref = option.object === "leads" ? { leadId: personId } : { contactId: personId };
           await stopForPerson(tx, actor, ref, "status_change");

@@ -17,6 +17,7 @@ import {
   accountService,
   contactService,
   leadService,
+  opportunityService,
   sequenceService,
   templateService,
 } from "../records";
@@ -229,6 +230,7 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   crud(api, "/leads", db, leadService);
   crud(api, "/accounts", db, accountService);
   crud(api, "/contacts", db, contactService);
+  crud(api, "/opportunities", db, opportunityService);
   crud(api, "/templates", db, templateService);
   crud(api, "/sequences", db, sequenceService);
 

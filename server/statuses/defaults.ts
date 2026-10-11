@@ -4,6 +4,8 @@ interface DefaultStatus {
   name: string;
   effect?: StatusEffect;
   color: StatusColor;
+  /** Opportunity stages only. Migration 0004 sets the same numbers for existing organizations. */
+  probability?: number;
 }
 
 const PEOPLE: DefaultStatus[] = [
@@ -31,11 +33,11 @@ export const DEFAULT_STATUSES: Record<StatusObject, DefaultStatus[]> = {
     { name: "Do Not Contact", color: "rose" },
   ],
   opportunities: [
-    { name: "Prospecting", color: "ocean" },
-    { name: "Qualified", color: "sage" },
-    { name: "Proposal", color: "teal" },
-    { name: "Negotiation", color: "mauve" },
-    { name: "Closed Won", effect: "won", color: "teal" },
-    { name: "Closed Lost", effect: "lost", color: "neutral" },
+    { name: "Prospecting", color: "ocean", probability: 10 },
+    { name: "Qualified", color: "sage", probability: 25 },
+    { name: "Proposal", color: "teal", probability: 50 },
+    { name: "Negotiation", color: "mauve", probability: 75 },
+    { name: "Closed Won", effect: "won", color: "teal", probability: 100 },
+    { name: "Closed Lost", effect: "lost", color: "neutral", probability: 0 },
   ],
 };

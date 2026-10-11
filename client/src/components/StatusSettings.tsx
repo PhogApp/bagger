@@ -25,7 +25,7 @@ const LISTS: { object: StatusObject; label: string; note?: string }[] = [
   {
     object: "opportunities",
     label: "Opportunities",
-    note: "These are the pipeline stages. They take effect when the opportunity pipeline is added to Bagger.",
+    note: "These are the pipeline stages, in the order the board shows them. The percentage is the chance of winning a deal at that stage, used for the weighted pipeline total.",
   },
 ];
 
@@ -84,7 +84,7 @@ export function StatusSettings({ canEdit }: { canEdit: boolean }) {
       setDeleting(null);
       setReplaceWith("");
       // Renames and replacements change the records themselves.
-      for (const key of ["leads", "contacts", "accounts"]) {
+      for (const key of ["leads", "contacts", "accounts", "opportunities"]) {
         await queryClient.invalidateQueries({ queryKey: [key] });
       }
     },
@@ -213,6 +213,14 @@ export function StatusSettings({ canEdit }: { canEdit: boolean }) {
                       ))}
                     </select>
                   )}
+                  {object === "opportunities" && (
+                    <ProbabilityInput
+                      key={String(option.probability)}
+                      option={option}
+                      disabled={disabled}
+                      onSave={(probability) => patch(option.id, { probability })}
+                    />
+                  )}
                   <label className="flex items-center gap-1.5 text-sm">
                     <input
                       type="radio"
@@ -334,6 +342,41 @@ export function StatusSettings({ canEdit }: { canEdit: boolean }) {
   );
 }
 
+/** A stage's win probability, saved on Enter or on leaving the box. */
+function ProbabilityInput(props: {
+  option: StatusOption;
+  disabled: boolean;
+  onSave: (probability: number | null) => void;
+}) {
+  const saved = props.option.probability;
+  const [value, setValue] = useState(saved === null ? "" : String(saved));
+  const save = () => {
+    const next = value.trim() === "" ? null : Math.round(Number(value));
+    if (next !== null && (!Number.isFinite(next) || next < 0 || next > 100)) {
+      setValue(saved === null ? "" : String(saved));
+    } else if (next !== saved) {
+      props.onSave(next);
+    }
+  };
+  return (
+    <span className="flex items-center gap-1 text-sm">
+      <Input
+        className="h-9 w-16 text-right"
+        inputMode="numeric"
+        value={value}
+        disabled={props.disabled}
+        aria-label={`Win probability of ${props.option.name}, percent`}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+      />
+      %
+    </span>
+  );
+}
+
 /** A status name that saves when you press Enter or leave the box. */
 function NameInput(props: {
   option: StatusOption;
@@ -348,7 +391,7 @@ function NameInput(props: {
   };
   return (
     <Input
-      className="h-9 w-44"
+      className="h-9 w-36"
       value={value}
       maxLength={40}
       disabled={props.disabled}
