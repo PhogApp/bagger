@@ -15,14 +15,15 @@ Foundation slice. What exists today:
 | Org setup | `server/orgs/provision.ts` | Creates an organization with settings, preset roles, and its first Admin |
 
 | Record API | `server/records/`, `server/http/app.ts` | Leads, contacts, accounts, templates, sequences: permission-checked, org-scoped, audited |
-| Sequence API | `server/sequences/service.ts` | Steps, reorder, enroll, pause, stop, the Run Steps queue, per-person message edits |
+| Sequence API | `server/sequences/service.ts` | Steps, reorder, enroll one person or many at once, pause, stop, the Run Steps queue, per-person message edits |
+| CSV import | `server/records/import.ts`, `client/src/components/ImportLeads.tsx` | Leads from a CSV file: column matching in the browser, duplicates by email skipped, bad rows reported by line |
 
 | Sign-in | `server/auth/clerk.ts`, `server/auth/identity.ts` | Clerk session to Bagger user, organization and role; first sign-in creates them |
 | Server | `server/index.ts`, `server/db/` | Production entry point, database connection, migrations |
 | Web client | `client/` | Sign-in, organization picker, app layout, and screens for Leads, Contacts, Accounts, Templates, Sequences (steps, people, enrolling), Run Steps, personal Settings, Admin (wait-day rule, users and roles) and the owner's Organization page |
 | Hosting | `render.yaml` | Render Blueprint for the staging web service and database |
 
-Not built yet: a dashboard, lead conversion, the opportunity pipeline, CSV import, reporting, and billing. Messages are plain text; rich text is not yet supported.
+Not built yet: a dashboard, lead conversion, the opportunity pipeline, reporting, and billing. Messages are plain text; rich text is not yet supported.
 
 ## Sequence rules
 

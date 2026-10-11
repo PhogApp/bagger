@@ -27,7 +27,13 @@ const MESSAGES: Record<string, string> = {
   enrollment_not_active: "This person's sequence is paused. Resume it first.",
   enrollment_ended: "This person's sequence has already ended.",
   invalid_date: "Pick a valid date.",
+  person_not_found: "This person no longer exists.",
 };
+
+/** A plain-language sentence for one of the server's error codes. */
+export function messageFor(code: string): string {
+  return MESSAGES[code] ?? "Something went wrong. Please try again.";
+}
 
 function describe(body: {
   error?: string;

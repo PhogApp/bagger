@@ -20,6 +20,7 @@ import {
   sequenceService,
   templateService,
 } from "../records";
+import { importLeads } from "../records/import";
 import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
@@ -99,7 +100,7 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "8mb" }));
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
@@ -188,6 +189,9 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     res.json(await seq.sequenceStats(db, actorOf(req)));
   });
 
+  api.post("/leads/import", async (req, res) => {
+    res.json(await importLeads(db, actorOf(req), req.body));
+  });
   crud(api, "/leads", db, leadService);
   crud(api, "/accounts", db, accountService);
   crud(api, "/contacts", db, contactService);
@@ -219,6 +223,9 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   });
   api.post("/sequences/:id/enrollments", async (req, res) => {
     res.status(201).json(await seq.enrollPerson(db, actorOf(req), id(req), req.body));
+  });
+  api.post("/sequences/:id/enrollments/bulk", async (req, res) => {
+    res.json(await seq.bulkEnroll(db, actorOf(req), id(req), req.body));
   });
   api.post("/enrollments/:id/pause", async (req, res) => {
     await seq.pause(db, actorOf(req), id(req));
