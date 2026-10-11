@@ -1,11 +1,9 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import {
-  accountStatusEnum,
   accounts,
   contacts,
   leads,
-  personStatusEnum,
   sequences,
   templateTypeEnum,
   templates,
@@ -13,6 +11,7 @@ import {
 import { ValidationError } from "../errors";
 import { stopForPerson } from "../sequences/engine";
 import { accountMatches, personMatches } from "./duplicates";
+import { statusEffect } from "../statuses/service";
 import { recordService } from "./service";
 
 const text = z.string().trim().min(1);
@@ -35,8 +34,10 @@ export const optionalUrl = z
 const email = z.email().trim().toLowerCase();
 const ownerId = z.uuid().optional();
 
-/** Statuses that end whatever sequence a person is in. */
-const STOP_STATUSES = new Set(["Not Interested", "Do Not Contact"]);
+/** A status from the organization's own list; the service checks it is on the list. */
+const status = z.string().trim().min(1).optional();
+/** Statuses with these effects end whatever sequence a person is in. */
+const STOPS = new Set(["ends_sequence", "do_not_contact"]);
 
 const personFields = {
   firstName: text,
@@ -48,7 +49,7 @@ const personFields = {
   hqPhone: optionalText,
   linkedin: optionalUrl,
   notes: optionalText,
-  status: z.enum(personStatusEnum.enumValues).optional(),
+  status,
   ownerId,
 };
 
@@ -60,7 +61,7 @@ export const accountInput = z.object({
   linkedin: optionalUrl,
   hqPhone: optionalText,
   notes: optionalText,
-  status: z.enum(accountStatusEnum.enumValues).optional(),
+  status,
   ownerId,
 });
 export const templateInput = z.object({
@@ -81,6 +82,7 @@ export const leadService = recordService<typeof leads.$inferSelect, typeof leadI
   table: leads,
   object: "leads",
   recordType: "lead",
+  statusObject: "leads",
   input: leadInput,
   search: [leads.firstName, leads.lastName, leads.email, leads.company, leads.cellPhone],
   orderBy: [leads.lastName, leads.firstName],
@@ -90,7 +92,8 @@ export const leadService = recordService<typeof leads.$inferSelect, typeof leadI
   duplicates: (tx, actor, values) =>
     personMatches(tx, actor.orgId, values.email, ["contact", "lead"]),
   afterUpdate: async (tx, actor, before, after) => {
-    if (before.status !== after.status && STOP_STATUSES.has(after.status)) {
+    if (before.status === after.status) return;
+    if (STOPS.has(await statusEffect(tx, actor.orgId, "leads", after.status))) {
       await stopForPerson(tx, actor, { leadId: after.id }, "status_change");
     }
   },
@@ -103,6 +106,7 @@ export const accountService = recordService<typeof accounts.$inferSelect, typeof
   table: accounts,
   object: "accounts",
   recordType: "account",
+  statusObject: "accounts",
   input: accountInput,
   search: [accounts.name, accounts.website],
   orderBy: [accounts.name],
@@ -123,6 +127,7 @@ export const contactService = recordService<typeof contacts.$inferSelect, typeof
   table: contacts,
   object: "contacts",
   recordType: "contact",
+  statusObject: "contacts",
   input: contactInput,
   search: [contacts.firstName, contacts.lastName, contacts.email, contacts.cellPhone],
   orderBy: [contacts.lastName, contacts.firstName],
@@ -142,7 +147,8 @@ export const contactService = recordService<typeof contacts.$inferSelect, typeof
     if (!account) throw new ValidationError("Account not found");
   },
   afterUpdate: async (tx, actor, before, after) => {
-    if (before.status !== after.status && STOP_STATUSES.has(after.status)) {
+    if (before.status === after.status) return;
+    if (STOPS.has(await statusEffect(tx, actor.orgId, "contacts", after.status))) {
       await stopForPerson(tx, actor, { contactId: after.id }, "status_change");
     }
   },

@@ -104,6 +104,28 @@ export function useOrgUsers() {
   return useQuery({ queryKey: ["users"], queryFn: () => api<OrgUser[]>("GET", "/api/users") });
 }
 
+export type StatusObject = "leads" | "contacts" | "accounts" | "opportunities";
+export type StatusColor = "ocean" | "teal" | "sage" | "mauve" | "rose" | "neutral";
+export interface StatusOption {
+  id: string;
+  object: StatusObject;
+  name: string;
+  isDefault: boolean;
+  effect: "none" | "ends_sequence" | "do_not_contact" | "won" | "lost";
+  color: StatusColor;
+  /** How many records have this status. */
+  inUse: number;
+}
+
+/** The organization's own status lists, in the order an admin put them. */
+export function useStatuses() {
+  const api = useApi();
+  return useQuery({
+    queryKey: ["statuses"],
+    queryFn: () => api<StatusOption[]>("GET", "/api/statuses"),
+  });
+}
+
 type ObjectName = "leads" | "contacts" | "accounts" | "templates" | "sequences";
 
 /** Mirrors the server's checks so the screens only offer what will succeed. */

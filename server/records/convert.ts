@@ -7,6 +7,7 @@ import { canCreate, PermissionError, requireRecord } from "../auth/permissions";
 import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
 import { moveEnrollmentsToContact } from "../sequences/engine";
+import { defaultStatus, listStatusNames } from "../statuses/service";
 import { AccountIndex, personMatches } from "./duplicates";
 import { optionalUrl } from "./index";
 
@@ -140,11 +141,25 @@ export async function convertLead(
       }
       const [created] = await tx
         .insert(accounts)
-        .values({ orgId: actor.orgId, ownerId: lead.ownerId, name, website: website ?? null })
+        .values({
+          orgId: actor.orgId,
+          ownerId: lead.ownerId,
+          name,
+          website: website ?? null,
+          status: await defaultStatus(tx, actor.orgId, "accounts"),
+        })
         .returning({ id: accounts.id });
       await recordLifecycle(tx, actor, "account", created.id, "create");
       accountId = created.id;
     }
+
+    // Leads and contacts have separate status lists. The contact keeps the
+    // lead's status when contacts have one of the same name, and otherwise
+    // starts on the default contact status.
+    const contactStatuses = await listStatusNames(tx, actor.orgId, "contacts");
+    const status =
+      contactStatuses.find((s) => s.toLowerCase() === lead.status.toLowerCase()) ??
+      (await defaultStatus(tx, actor.orgId, "contacts"));
 
     const [contact] = await tx
       .insert(contacts)
@@ -161,7 +176,7 @@ export async function convertLead(
         hqPhone: lead.hqPhone,
         linkedin: lead.linkedin,
         notes: lead.notes,
-        status: lead.status,
+        status,
       })
       .returning({ id: contacts.id });
     await recordLifecycle(tx, actor, "contact", contact.id, "create");

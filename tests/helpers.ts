@@ -57,6 +57,7 @@ export async function createLead(
       lastName: "Rude",
       email: `jill${counter}@redfield.example`,
       company: "Redfield Energy",
+      status: "New",
       ...overrides,
     })
     .returning();
@@ -67,7 +68,7 @@ export async function createContact(db: Db, ctx: Ctx, accountName = "Phog, Inc."
   counter++;
   const [account] = await db
     .insert(schema.accounts)
-    .values({ orgId: ctx.orgId, ownerId: ctx.userId, name: accountName })
+    .values({ orgId: ctx.orgId, ownerId: ctx.userId, name: accountName, status: "Active" })
     .returning();
   const [contact] = await db
     .insert(schema.contacts)
@@ -78,6 +79,7 @@ export async function createContact(db: Db, ctx: Ctx, accountName = "Phog, Inc."
       firstName: "Dan",
       lastName: "Smith",
       email: `dan${counter}@phog.example`,
+      status: "New",
     })
     .returning();
   return contact;
