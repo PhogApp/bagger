@@ -1,3 +1,4 @@
+import { AccountRelated } from "@/components/AccountRelated";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ImportButton } from "@/components/ImportRecords";
@@ -58,6 +59,7 @@ export function AccountsPage() {
           <ImportButton kind="accounts" />
         ) : undefined
       }
+      related={(a) => <AccountRelated accountId={a.id} />}
       describe={(a) => a.name}
     />
   );
