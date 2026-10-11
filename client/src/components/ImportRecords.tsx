@@ -91,7 +91,7 @@ const KINDS: Record<ImportKind, KindConfig> = {
   leads: {
     singular: "lead",
     plural: "leads",
-    match: "A lead is already in Bagger when a lead has the same email address.",
+    match: "A lead is already in Bagger when a lead or a contact has the same email address.",
     targets: [
       ...PERSON,
       {
@@ -184,6 +184,8 @@ interface Parsed {
 interface RowNote {
   row: number;
   label: string;
+  /** A lead in the file that is already a contact; always skipped. */
+  existing?: "contact";
 }
 interface Result {
   total: number;
@@ -370,6 +372,7 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
     );
   } else if (review && parsed) {
     const dupes = review.duplicates.length;
+    const asContacts = review.duplicates.filter((d) => d.existing === "contact").length;
     body = (
       <div className="space-y-3 text-sm">
         <p>
@@ -389,6 +392,7 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
               {review.duplicates.slice(0, 100).map((d) => (
                 <li key={d.row}>
                   Line {line(d.row)}: {d.label}
+                  {d.existing === "contact" && " (already a contact)"}
                 </li>
               ))}
             </ul>
@@ -419,6 +423,10 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
                   <span className="font-medium">Replace with the file.</span> Overwrite Bagger's
                   values with the file's. Blank cells change nothing, and owner, status and
                   sequence progress are kept.
+                  {asContacts > 0 &&
+                    ` The ${asContacts === 1 ? "one that is" : `${asContacts} that are`} already ${
+                      asContacts === 1 ? "a contact" : "contacts"
+                    } will still be skipped.`}
                 </span>
               </label>
             </fieldset>
@@ -555,7 +563,8 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
   );
 
   function ImportAction() {
-    const updating = review!.duplicates.length > 0 && onDuplicate === "update";
+    const replaceable = review!.duplicates.filter((d) => !d.existing).length;
+    const updating = replaceable > 0 && onDuplicate === "update";
     const creating = review!.created;
     const nothing = creating === 0 && !updating;
     const parts = [
@@ -563,8 +572,8 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
       updating
         ? `${creating > 0 ? "update" : "Update"} ${
             creating > 0
-              ? review!.duplicates.length.toLocaleString()
-              : count(review!.duplicates.length, cfg.singular)
+              ? replaceable.toLocaleString()
+              : count(replaceable, cfg.singular)
           }`
         : "",
     ].filter(Boolean);

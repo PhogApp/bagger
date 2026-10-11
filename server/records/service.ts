@@ -11,7 +11,7 @@ import {
   type ObjectName,
 } from "../auth/permissions";
 import type { Db } from "../db/types";
-import { NotFoundError, ValidationError } from "../errors";
+import { DuplicateError, NotFoundError, ValidationError, type DuplicateMatch } from "../errors";
 
 /**
  * The single write path for ordinary records (leads, contacts, accounts,
@@ -42,8 +42,20 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   orderBy: AnyPgColumn[];
   /** Check references (for example, that an account is in this org). */
   validate?: (tx: Db, actor: Actor, values: Partial<z.infer<TSchema>>) => Promise<void>;
+  /** Records that look like the one about to be created. Any match stops the create. */
+  duplicates?: (tx: Db, actor: Actor, values: z.infer<TSchema>) => Promise<DuplicateMatch[]>;
+  /** Rows the list leaves out, e.g. leads that became contacts. */
+  hidden?: SQL;
+  /** A reason this row can no longer be changed or deleted, or null. */
+  frozen?: (row: TRow) => string | null;
   afterUpdate?: (tx: Db, actor: Actor, before: TRow, after: TRow) => Promise<void>;
   afterDelete?: (tx: Db, actor: Actor, row: TRow) => Promise<void>;
+}
+
+export interface CreateOptions {
+  source?: HistorySource;
+  /** The user has seen the possible duplicates and wants the record anyway. */
+  allowDuplicate?: boolean;
 }
 
 export interface ListOptions {
@@ -80,6 +92,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
       const scope = scopeFor(actor.permissions, cfg.object, "view");
       if (scope === "none") throw new PermissionError(`${cfg.object}.view`);
       const where = [inOrg(actor)];
+      if (cfg.hidden) where.push(cfg.hidden);
       if (scope === "own") where.push(eq(t.ownerId, actor.userId));
       const q = options.q?.trim();
       if (q && cfg.search.length > 0) {
@@ -106,7 +119,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
       db: Db,
       actor: Actor,
       raw: unknown,
-      source: HistorySource = "user",
+      options: CreateOptions = {},
     ): Promise<TRow> {
       if (!canCreate(actor.permissions, cfg.object)) {
         throw new PermissionError(`${cfg.object}.create`);
@@ -115,11 +128,15 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
       return db.transaction(async (tx) => {
         await checkOwner(tx, actor, values.ownerId);
         await cfg.validate?.(tx, actor, values);
+        if (cfg.duplicates && !options.allowDuplicate) {
+          const matches = await cfg.duplicates(tx, actor, values);
+          if (matches.length > 0) throw new DuplicateError(matches);
+        }
         const [row] = await tx
           .insert(t)
           .values({ ...values, orgId: actor.orgId, ownerId: values.ownerId ?? actor.userId })
           .returning();
-        await recordLifecycle(tx, actor, cfg.recordType, row.id, "create", source);
+        await recordLifecycle(tx, actor, cfg.recordType, row.id, "create", options.source);
         return row as TRow;
       });
     },
@@ -134,6 +151,8 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
           .for("update")) as TRow[];
         if (!before) throw new NotFoundError(cfg.recordType);
         requireRecord(actor.permissions, cfg.object, "edit", before, actor.userId);
+        const frozen = cfg.frozen?.(before);
+        if (frozen) throw new ValidationError(frozen);
 
         const changes = diffFields(before as unknown as Record<string, unknown>, patch);
         if (changes.length === 0) return before;
@@ -161,6 +180,8 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
           .for("update")) as TRow[];
         if (!row) throw new NotFoundError(cfg.recordType);
         requireRecord(actor.permissions, cfg.object, "delete", row, actor.userId);
+        const frozen = cfg.frozen?.(row);
+        if (frozen) throw new ValidationError(frozen);
         await tx.update(t).set({ deletedAt: new Date() }).where(eq(t.id, id));
         await recordLifecycle(tx, actor, cfg.recordType, id, "delete");
         await cfg.afterDelete?.(tx, actor, row);

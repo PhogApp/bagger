@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import path from "node:path";
 import express, {
   type NextFunction,
@@ -8,11 +8,11 @@ import express, {
   type Router,
 } from "express";
 import { z, ZodError } from "zod";
-import { fieldHistory, users } from "../../shared/schema";
+import { fieldHistory, leads, users } from "../../shared/schema";
 import type { Actor } from "../auth/actor";
 import { PermissionError, requireTool } from "../auth/permissions";
 import type { Db } from "../db/types";
-import { NotFoundError, ValidationError } from "../errors";
+import { DuplicateError, NotFoundError, ValidationError } from "../errors";
 import {
   accountService,
   contactService,
@@ -20,6 +20,7 @@ import {
   sequenceService,
   templateService,
 } from "../records";
+import { conversionPreview, convertLead } from "../records/convert";
 import { IMPORT_KINDS, importRecords } from "../records/import";
 import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
@@ -61,7 +62,12 @@ type Handler = (req: Request, res: Response) => Promise<void>;
 interface CrudService {
   list(db: Db, actor: Actor, options: z.infer<typeof listQuery>): Promise<unknown[]>;
   get(db: Db, actor: Actor, id: string): Promise<unknown>;
-  create(db: Db, actor: Actor, raw: unknown): Promise<unknown>;
+  create(
+    db: Db,
+    actor: Actor,
+    raw: unknown,
+    options?: { allowDuplicate?: boolean },
+  ): Promise<unknown>;
   update(db: Db, actor: Actor, id: string, raw: unknown): Promise<unknown>;
   remove(db: Db, actor: Actor, id: string): Promise<void>;
 }
@@ -71,7 +77,9 @@ function crud(router: Router, path: string, db: Db, service: CrudService) {
     res.json(await service.list(db, actorOf(req), listQuery.parse(req.query)));
   }) satisfies Handler);
   router.post(path, (async (req, res) => {
-    res.status(201).json(await service.create(db, actorOf(req), req.body));
+    // ?allowDuplicate=1 is sent after the user has been shown the matches.
+    const allowDuplicate = req.query.allowDuplicate === "1";
+    res.status(201).json(await service.create(db, actorOf(req), req.body, { allowDuplicate }));
   }) satisfies Handler);
   router.get(`${path}/:id`, (async (req, res) => {
     res.json(await service.get(db, actorOf(req), id(req)));
@@ -194,6 +202,12 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     if (!kind.success) throw new NotFoundError();
     res.json(await importRecords(db, actorOf(req), kind.data, req.body));
   });
+  api.get("/leads/:id/conversion", async (req, res) => {
+    res.json(await conversionPreview(db, actorOf(req), id(req)));
+  });
+  api.post("/leads/:id/convert", async (req, res) => {
+    res.json(await convertLead(db, actorOf(req), id(req), req.body));
+  });
   crud(api, "/leads", db, leadService);
   crud(api, "/accounts", db, accountService);
   crud(api, "/contacts", db, contactService);
@@ -268,9 +282,20 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.get("/history/:recordType/:id", async (req, res) => {
     const actor = actorOf(req);
     requireTool(actor.permissions, "history.view");
+    const recordType = String(req.params.recordType);
+    const recordId = id(req);
+    // A contact that began as a lead shows the lead's history too.
+    const asLead =
+      recordType === "contact"
+        ? await db
+            .select({ id: leads.id })
+            .from(leads)
+            .where(and(eq(leads.orgId, actor.orgId), eq(leads.convertedContactId, recordId)))
+        : [];
     const rows = await db
       .select({
         id: fieldHistory.id,
+        recordType: fieldHistory.recordType,
         action: fieldHistory.action,
         field: fieldHistory.field,
         oldValue: fieldHistory.oldValue,
@@ -285,8 +310,18 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       .where(
         and(
           eq(fieldHistory.orgId, actor.orgId),
-          eq(fieldHistory.recordType, String(req.params.recordType)),
-          eq(fieldHistory.recordId, id(req)),
+          or(
+            and(eq(fieldHistory.recordType, recordType), eq(fieldHistory.recordId, recordId)),
+            asLead.length > 0
+              ? and(
+                  eq(fieldHistory.recordType, "lead"),
+                  inArray(
+                    fieldHistory.recordId,
+                    asLead.map((l) => l.id),
+                  ),
+                )
+              : undefined,
+          ),
         ),
       )
       .orderBy(desc(fieldHistory.createdAt), asc(fieldHistory.field));
@@ -314,6 +349,8 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       res.status(400).json({ error: "invalid_input", issues: z.flattenError(err) });
     } else if (err instanceof ValidationError) {
       res.status(400).json({ error: "invalid_input", message: err.message });
+    } else if (err instanceof DuplicateError) {
+      res.status(409).json({ error: "duplicate", matches: err.matches });
     } else if (err instanceof PermissionError) {
       res.status(403).json({ error: "forbidden", permission: err.permission });
     } else if (err instanceof NotFoundError) {

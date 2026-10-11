@@ -12,6 +12,7 @@ import {
 } from "../auth/permissions";
 import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
+import { AccountIndex, domainOf, nameKey } from "./duplicates";
 import { accountInput, contactInput, leadInput, optionalUrl } from "./index";
 
 /**
@@ -19,7 +20,8 @@ import { accountInput, contactInput, leadInput, optionalUrl } from "./index";
  * CSV file by the browser.
  *
  * What counts as "already in Bagger":
- *   - a lead or contact with the same email address,
+ *   - a lead with the same email as a lead or a contact; a contact with the
+ *     same email as a contact,
  *   - an account with the same name, or the same website (compared by
  *     domain, so "https://www.acme.com/about" matches "acme.com").
  *
@@ -50,6 +52,11 @@ export interface RowNote {
   row: number;
   /** The email or account name, to show the person. */
   label: string;
+  /**
+   * Set when a lead in the file is already a contact. Such a row is always
+   * skipped: a lead file cannot overwrite a contact.
+   */
+  existing?: "contact";
 }
 
 export interface ImportResult {
@@ -88,59 +95,6 @@ function chunks<T>(items: T[], size: number): T[][] {
 function humanize(field: string): string {
   const words = field.replace(/([A-Z])/g, " $1").toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-/** "https://www.Acme.com/about" -> "acme.com". Null when there is nothing usable. */
-export function domainOf(url: string | null | undefined): string | null {
-  if (!url) return null;
-  const host = url
-    .trim()
-    .toLowerCase()
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
-    .replace(/^www\./, "")
-    .split(/[/?#]/)[0]
-    .replace(/:\d+$/, "");
-  return host === "" ? null : host;
-}
-
-const nameKey = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
-
-interface AccountRef {
-  id: string;
-  ownerId: string;
-}
-
-/** Every live account in the organization, findable by name or by website domain. */
-class AccountIndex {
-  private byName = new Map<string, AccountRef>();
-  private byDomain = new Map<string, AccountRef>();
-
-  static async load(tx: Db, orgId: string): Promise<AccountIndex> {
-    const index = new AccountIndex();
-    const rows = await tx
-      .select({
-        id: accounts.id,
-        ownerId: accounts.ownerId,
-        name: accounts.name,
-        website: accounts.website,
-      })
-      .from(accounts)
-      .where(and(eq(accounts.orgId, orgId), isNull(accounts.deletedAt)));
-    for (const row of rows) index.add(row, row.name, row.website);
-    return index;
-  }
-
-  add(ref: AccountRef, name: string, website: string | null | undefined) {
-    const key = nameKey(name);
-    if (!this.byName.has(key)) this.byName.set(key, ref);
-    const domain = domainOf(website);
-    if (domain && !this.byDomain.has(domain)) this.byDomain.set(domain, ref);
-  }
-
-  find(name: string, website: string | null | undefined): AccountRef | undefined {
-    const domain = domainOf(website);
-    return this.byName.get(nameKey(name)) ?? (domain ? this.byDomain.get(domain) : undefined);
-  }
 }
 
 type Values = Record<string, unknown>;
@@ -231,6 +185,7 @@ export async function importRecords(
     const accountIndex =
       kind === "leads" ? new AccountIndex() : await AccountIndex.load(tx, actor.orgId);
     const existingPeople = new Map<string, string>();
+    const alreadyContacts = new Set<string>();
     if (kind !== "accounts") {
       const people = kind === "leads" ? leads : contacts;
       for (const batch of chunks(valid.map((v) => v.label), 1000)) {
@@ -242,15 +197,34 @@ export async function importRecords(
               eq(people.orgId, actor.orgId),
               isNull(people.deletedAt),
               inArray(people.email, batch),
+              // A converted lead is its contact now, and is found there.
+              ...(kind === "leads" ? [isNull(leads.convertedAt)] : []),
             ),
           );
         for (const f of found) existingPeople.set(f.email, f.id);
+        if (kind === "leads") {
+          const asContacts = await tx
+            .select({ email: contacts.email })
+            .from(contacts)
+            .where(
+              and(
+                eq(contacts.orgId, actor.orgId),
+                isNull(contacts.deletedAt),
+                inArray(contacts.email, batch),
+              ),
+            );
+          for (const c of asContacts) alreadyContacts.add(c.email);
+        }
       }
     }
 
     const fresh: ValidRow[] = [];
     const matched: { item: ValidRow; id: string }[] = [];
     for (const item of valid) {
+      if (alreadyContacts.has(item.label)) {
+        result.duplicates.push({ row: item.row, label: item.label, existing: "contact" });
+        continue;
+      }
       const id =
         kind === "accounts"
           ? accountIndex.find(item.label, item.values.website as string | undefined)?.id
@@ -283,7 +257,7 @@ export async function importRecords(
           }
           result.newAccounts += 1;
           if (mode === "check") {
-            account = { id: "", ownerId: newOwnerId };
+            account = { id: "", ownerId: newOwnerId, name: accountName };
           } else {
             const [created] = await tx
               .insert(accounts)
@@ -293,7 +267,7 @@ export async function importRecords(
                 name: accountName,
                 website: accountWebsite ?? null,
               })
-              .returning({ id: accounts.id, ownerId: accounts.ownerId });
+              .returning({ id: accounts.id, ownerId: accounts.ownerId, name: accounts.name });
             await tx.insert(fieldHistory).values({
               orgId: actor.orgId,
               recordType: "account",
@@ -304,7 +278,7 @@ export async function importRecords(
             });
             account = created;
           }
-          accountIndex.add(account, accountName, accountWebsite);
+          accountIndex.add(account, accountWebsite);
         }
         inserts.push({ ...person, accountId: account.id });
       }

@@ -530,6 +530,28 @@ export async function stopForPerson(
   });
 }
 
+// ---------------------------------------------------- lead conversion
+
+/**
+ * A lead became a contact. Every enrollment the lead ever had, live or ended,
+ * now belongs to the contact, so its place in a sequence and its past steps
+ * carry over. Tasks hang off their enrollment and need no change. Call this
+ * inside the transaction that creates the contact.
+ */
+export async function moveEnrollmentsToContact(
+  tx: Db,
+  ctx: Ctx,
+  leadId: string,
+  contactId: string,
+): Promise<number> {
+  const moved = await tx
+    .update(enrollments)
+    .set({ leadId: null, contactId })
+    .where(and(eq(enrollments.orgId, ctx.orgId), eq(enrollments.leadId, leadId)))
+    .returning({ id: enrollments.id });
+  return moved.length;
+}
+
 // ------------------------------------------------------- step removal
 
 /**
