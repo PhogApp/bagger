@@ -25,7 +25,7 @@ const optionalText = z
  * Web addresses as people type them. "www.example.com" is accepted and
  * stored as "https://www.example.com" so it works as a link.
  */
-const optionalUrl = z
+export const optionalUrl = z
   .string()
   .trim()
   .transform((v) => (v === "" ? null : /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`))

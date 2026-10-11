@@ -150,25 +150,33 @@ describe("leads", () => {
   });
 });
 
-describe("importing leads", () => {
-  it("imports good rows, skips duplicates, and reports bad rows by number", async () => {
+describe("importing from a CSV file", () => {
+  it("imports good leads, skips duplicates, and reports bad rows by number", async () => {
     await as(rep).post("/api/leads", newLead({ email: "already@here.example" }));
-    const res = await as(rep).post("/api/leads/import", {
-      rows: [
-        { firstName: "Ann", lastName: "One", email: "Ann.One@Import.example", company: "Acme" },
-        { firstName: "Bob", lastName: "Two", email: "not-an-email" },
-        { firstName: "Cat", lastName: "Three", email: "already@here.example" },
-        { firstName: "Dan", lastName: "Four", email: "ann.one@import.example" }, // same as row 1
-        { firstName: "", lastName: "Five", email: "eve@import.example" },
-        { firstName: "Fay", lastName: "Six", email: "fay@import.example", title: "  ", cellPhone: "" },
-      ],
+    const rows = [
+      { firstName: "Ann", lastName: "One", email: "Ann.One@Import.example", company: "Acme" },
+      { firstName: "Bob", lastName: "Two", email: "not-an-email" },
+      { firstName: "Cat", lastName: "Three", email: "already@here.example" },
+      { firstName: "Dan", lastName: "Four", email: "ann.one@import.example" }, // same as row 1
+      { firstName: "", lastName: "Five", email: "eve@import.example" },
+      { firstName: "Fay", lastName: "Six", email: "fay@import.example", title: "  ", cellPhone: "" },
+    ];
+
+    // Checking first saves nothing and says what would happen.
+    const check = await as(rep).post("/api/import/leads", { rows, mode: "check" });
+    expect(check.status).toBe(200);
+    expect(check.body).toMatchObject({
+      total: 6,
+      created: 2,
+      updated: 0,
+      duplicates: [{ row: 3, label: "already@here.example" }],
+      repeats: [{ row: 4, label: "ann.one@import.example" }],
     });
-    expect(res.status).toBe(200);
-    expect(res.body.created).toBe(2);
-    expect(res.body.duplicates).toEqual([
-      { row: 3, email: "already@here.example" },
-      { row: 4, email: "ann.one@import.example" },
-    ]);
+    expect((await as(rep).get("/api/leads?q=import.example")).body).toHaveLength(0);
+
+    const res = await as(rep).post("/api/import/leads", { rows, mode: "skip" });
+    expect(res.body).toMatchObject({ created: 2, updated: 0 });
+    expect(res.body.duplicates).toEqual(check.body.duplicates);
     expect(res.body.errors.map((e: { row: number }) => e.row)).toEqual([2, 5]);
     expect(res.body.errors[0].message).toMatch(/^Email: /);
     expect(res.body.errors[1].message).toBe("First name is missing");
@@ -182,10 +190,111 @@ describe("importing leads", () => {
     expect(history[0]).toMatchObject({ action: "create", source: "import", userId: rep.userId });
 
     // Importing the same file again creates nothing.
-    const again = await as(rep).post("/api/leads/import", {
-      rows: [{ firstName: "Ann", lastName: "One", email: "ann.one@import.example" }],
-    });
+    const again = await as(rep).post("/api/import/leads", { rows: [rows[0]] });
     expect(again.body).toMatchObject({ created: 0, duplicates: [{ row: 1 }] });
+  });
+
+  it("overwrites existing leads only when asked, and never blanks a field", async () => {
+    const lead = (
+      await as(rep).post(
+        "/api/leads",
+        newLead({ email: "keep@update.example", title: "Buyer", cellPhone: "555-0100" }),
+      )
+    ).body;
+    await as(admin).patch(`/api/leads/${lead.id}`, { status: "Prospecting" });
+    const rows = [
+      { firstName: "Jill", lastName: "Renamed", email: "KEEP@update.example", title: "CFO", cellPhone: "", status: "New" },
+      { firstName: "New", lastName: "Person", email: "new@update.example" },
+    ];
+    const res = await as(rep2).post("/api/import/leads", { rows, mode: "update" });
+    expect(res.body).toMatchObject({ created: 1, updated: 1, duplicates: [{ row: 1 }], errors: [] });
+
+    const after = (await as(rep).get(`/api/leads/${lead.id}`)).body;
+    expect(after).toMatchObject({
+      lastName: "Renamed",
+      title: "CFO",
+      cellPhone: "555-0100", // blank in the file, so left alone
+      status: "Prospecting", // the file never changes status
+      ownerId: rep.userId, // or the owner
+    });
+    const history = (await as(rep).get(`/api/history/lead/${lead.id}`)).body;
+    const fromImport = history.filter((h: { source: string }) => h.source === "import");
+    expect(fromImport.map((h: { field: string }) => h.field).sort()).toEqual(["lastName", "title"]);
+    expect(fromImport.find((h: { field: string }) => h.field === "title")).toMatchObject({
+      oldValue: "Buyer",
+      newValue: "CFO",
+      userId: rep2.userId,
+    });
+
+    // The same file again changes nothing.
+    const again = await as(rep2).post("/api/import/leads", { rows, mode: "update" });
+    expect(again.body).toMatchObject({ created: 0, updated: 0 });
+  });
+
+  it("matches accounts by name or by website", async () => {
+    await as(rep).post("/api/accounts", { name: "Halvorsen Freight", website: "www.halvorsen.example" });
+    const rows = [
+      { name: "  halvorsen  FREIGHT " }, // same name, different case and spacing
+      { name: "Halvorsen Logistics", website: "https://halvorsen.example/about", hqPhone: "555-0142" }, // same site
+      { name: "Northwind Parts", website: "northwind.example" },
+      { name: "Northwind Parts Inc", website: "www.northwind.example" }, // repeats row 3's site
+      { website: "nameless.example" },
+    ];
+    const check = await as(rep).post("/api/import/accounts", { rows, mode: "check" });
+    expect(check.body).toMatchObject({
+      created: 1,
+      duplicates: [{ row: 1 }, { row: 2, label: "Halvorsen Logistics" }],
+      repeats: [{ row: 4 }],
+      errors: [{ row: 5, message: "Name is missing" }],
+    });
+
+    const res = await as(rep).post("/api/import/accounts", { rows, mode: "update" });
+    expect(res.body).toMatchObject({ created: 1, updated: 2 });
+    const halvorsen = (await as(rep).get("/api/accounts?q=halvorsen")).body;
+    expect(halvorsen).toHaveLength(1);
+    expect(halvorsen[0]).toMatchObject({ name: "Halvorsen Logistics", hqPhone: "555-0142" });
+    const northwind = (await as(rep).get("/api/accounts?q=northwind")).body;
+    expect(northwind).toHaveLength(1);
+    expect(northwind[0].website).toBe("https://northwind.example");
+  });
+
+  it("puts imported contacts on the right account, creating it when needed", async () => {
+    const existing = (
+      await as(rep).post("/api/accounts", { name: "Tidewater Supply", website: "tidewater.example" })
+    ).body;
+    const rows = [
+      { firstName: "Una", lastName: "A", email: "una@tidewater.example", accountName: "tidewater supply" },
+      { firstName: "Vic", lastName: "B", email: "vic@tidewater.example", accountName: "Tidewater", accountWebsite: "www.tidewater.example" },
+      { firstName: "Wes", lastName: "C", email: "wes@brandnew.example", accountName: "Brand New Co", accountWebsite: "brandnew.example" },
+      { firstName: "Xia", lastName: "D", email: "xia@brandnew.example", accountName: "Brand New Co" },
+      { firstName: "Yan", lastName: "E", email: "yan@nowhere.example" },
+    ];
+    const check = await as(rep).post("/api/import/contacts", { rows, mode: "check" });
+    expect(check.body).toMatchObject({ created: 4, newAccounts: 1 });
+    expect(check.body.errors).toEqual([{ row: 5, message: "Account name is missing" }]);
+    expect((await as(rep).get("/api/accounts?q=brand new")).body).toHaveLength(0);
+
+    const res = await as(rep).post("/api/import/contacts", { rows });
+    expect(res.body).toMatchObject({ created: 4, newAccounts: 1, duplicates: [] });
+    const created = (await as(rep).get("/api/accounts?q=brand new")).body;
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ website: "https://brandnew.example", ownerId: rep.userId });
+    const people = (await as(rep).get("/api/contacts?q=.example&limit=500")).body;
+    const accountOf = (email: string) =>
+      people.find((c: { email: string }) => c.email === email).accountId;
+    expect(accountOf("una@tidewater.example")).toBe(existing.id);
+    expect(accountOf("vic@tidewater.example")).toBe(existing.id);
+    expect(accountOf("wes@brandnew.example")).toBe(created[0].id);
+    expect(accountOf("xia@brandnew.example")).toBe(created[0].id);
+
+    // An existing contact is a duplicate, and updating it does not move it.
+    const moved = await as(rep).post("/api/import/contacts", {
+      rows: [{ ...rows[0], title: "Buyer", accountName: "Brand New Co" }],
+      mode: "update",
+    });
+    expect(moved.body).toMatchObject({ created: 0, updated: 1, newAccounts: 0 });
+    const una = (await as(rep).get("/api/contacts?q=una@tidewater")).body[0];
+    expect(una).toMatchObject({ title: "Buyer", accountId: existing.id });
   });
 
   it("handles a large file and keeps organizations apart", async () => {
@@ -194,21 +303,24 @@ describe("importing leads", () => {
       lastName: `Lead${i}`,
       email: `bulk${i}@big.example`,
     }));
-    const res = await as(manager).post("/api/leads/import", { rows, ownerId: rep2.userId });
+    const res = await as(manager).post("/api/import/leads", { rows, ownerId: rep2.userId });
     expect(res.body).toMatchObject({ created: 1200, duplicates: [], errors: [] });
     const mine = (await as(rep2).get("/api/leads?q=big.example&limit=5")).body;
     expect(mine[0].ownerId).toBe(rep2.userId);
     // The same emails are not duplicates in a different organization.
-    const other = await as(outsider).post("/api/leads/import", { rows: rows.slice(0, 3) });
+    const other = await as(outsider).post("/api/import/leads", { rows: rows.slice(0, 3) });
     expect(other.body.created).toBe(3);
   });
 
   it("is refused for a read-only user, and for an owner outside the organization", async () => {
     const rows = [{ firstName: "X", lastName: "Y", email: "xy@denied.example" }];
-    expect((await as(viewer).post("/api/leads/import", { rows })).status).toBe(403);
-    const badOwner = await as(rep).post("/api/leads/import", { rows, ownerId: outsider.userId });
+    for (const kind of ["leads", "contacts", "accounts"]) {
+      expect((await as(viewer).post(`/api/import/${kind}`, { rows, mode: "check" })).status).toBe(403);
+    }
+    const badOwner = await as(rep).post("/api/import/leads", { rows, ownerId: outsider.userId });
     expect(badOwner.status).toBe(400);
-    expect((await as(rep).post("/api/leads/import", { rows: [] })).status).toBe(400);
+    expect((await as(rep).post("/api/import/leads", { rows: [] })).status).toBe(400);
+    expect((await as(rep).post("/api/import/templates", { rows })).status).toBe(404);
   });
 });
 

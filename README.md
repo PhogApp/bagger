@@ -16,7 +16,7 @@ Foundation slice. What exists today:
 
 | Record API | `server/records/`, `server/http/app.ts` | Leads, contacts, accounts, templates, sequences: permission-checked, org-scoped, audited |
 | Sequence API | `server/sequences/service.ts` | Steps, reorder, enroll one person or many at once, pause, stop, the Run Steps queue, per-person message edits |
-| CSV import | `server/records/import.ts`, `client/src/components/ImportLeads.tsx` | Leads from a CSV file: column matching in the browser, duplicates by email skipped, bad rows reported by line |
+| CSV import | `server/records/import.ts`, `client/src/components/ImportRecords.tsx` | Leads, contacts and accounts from a CSV file: sample file download, column matching in the browser, a check for records already in Bagger (people by email, accounts by name or website) before anything is saved, then skip or overwrite them; bad rows reported by line |
 
 | Sign-in | `server/auth/clerk.ts`, `server/auth/identity.ts` | Clerk session to Bagger user, organization and role; first sign-in creates them |
 | Server | `server/index.ts`, `server/db/` | Production entry point, database connection, migrations |

@@ -1,6 +1,7 @@
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
-import { useMe, useOrgUsers } from "@/lib/api";
+import { ImportButton } from "@/components/ImportRecords";
+import { canUse, permissionsFor, useMe, useOrgUsers } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { ACCOUNT_STATUSES, nameOf, ownerField, toOptions } from "./shared";
 
@@ -58,6 +59,11 @@ export function AccountsPage() {
       fields={fields}
       columns={columns}
       defaults={{ status: "Active", ownerId: me?.user.id ?? "" }}
+      headerActions={
+        canUse(me, "data.import") && permissionsFor(me, "accounts").canCreate ? (
+          <ImportButton kind="accounts" />
+        ) : undefined
+      }
       describe={(a) => a.name}
     />
   );
