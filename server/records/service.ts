@@ -11,6 +11,8 @@ import {
   type ObjectName,
 } from "../auth/permissions";
 import type { Db } from "../db/types";
+import type { StatusObject } from "../../shared/schema";
+import { defaultStatus, resolveStatus } from "../statuses/service";
 import { DuplicateError, NotFoundError, ValidationError, type DuplicateMatch } from "../errors";
 
 /**
@@ -42,6 +44,8 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   orderBy: AnyPgColumn[];
   /** Check references (for example, that an account is in this org). */
   validate?: (tx: Db, actor: Actor, values: Partial<z.infer<TSchema>>) => Promise<void>;
+  /** Set when the record has a status drawn from the organization's own list. */
+  statusObject?: StatusObject;
   /** Records that look like the one about to be created. Any match stops the create. */
   duplicates?: (tx: Db, actor: Actor, values: z.infer<TSchema>) => Promise<DuplicateMatch[]>;
   /** Rows the list leaves out, e.g. leads that became contacts. */
@@ -68,7 +72,18 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
   cfg: RecordConfig<TRow, TSchema>,
 ) {
   const t = cfg.table;
-  type Input = z.infer<TSchema> & { ownerId?: string };
+  type Input = z.infer<TSchema> & { ownerId?: string; status?: string };
+
+  /** Check a chosen status against the organization's list; fill in the default on create. */
+  async function settleStatus(tx: Db, actor: Actor, input: Partial<Input>, creating: boolean) {
+    if (!cfg.statusObject) return;
+    const values = input as { status?: string };
+    if (values.status !== undefined) {
+      values.status = await resolveStatus(tx, actor.orgId, cfg.statusObject, values.status);
+    } else if (creating) {
+      values.status = await defaultStatus(tx, actor.orgId, cfg.statusObject);
+    }
+  }
 
   const inOrg = (actor: Actor): SQL => and(eq(t.orgId, actor.orgId), isNull(t.deletedAt))!;
 
@@ -128,6 +143,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
       return db.transaction(async (tx) => {
         await checkOwner(tx, actor, values.ownerId);
         await cfg.validate?.(tx, actor, values);
+        await settleStatus(tx, actor, values, true);
         if (cfg.duplicates && !options.allowDuplicate) {
           const matches = await cfg.duplicates(tx, actor, values);
           if (matches.length > 0) throw new DuplicateError(matches);
@@ -154,6 +170,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         const frozen = cfg.frozen?.(before);
         if (frozen) throw new ValidationError(frozen);
 
+        await settleStatus(tx, actor, patch, false);
         const changes = diffFields(before as unknown as Record<string, unknown>, patch);
         if (changes.length === 0) return before;
         await checkOwner(tx, actor, patch.ownerId);

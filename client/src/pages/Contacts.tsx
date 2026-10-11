@@ -4,10 +4,10 @@ import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
 import { ImportButton } from "@/components/ImportRecords";
-import { canUse, permissionsFor, useApi, useMe, useOrgUsers } from "@/lib/api";
+import { canUse, permissionsFor, useApi, useMe, useStatuses, useOrgUsers } from "@/lib/api";
 import { formatPhone } from "@/lib/utils";
 import type { Account } from "./Accounts";
-import { nameOf, ownerField, PERSON_STATUSES, toOptions } from "./shared";
+import { defaultStatus, nameOf, ownerField, statusColor, statusField } from "./shared";
 
 interface Contact {
   id: string;
@@ -27,6 +27,7 @@ export function ContactsPage() {
   const api = useApi();
   const { data: users } = useOrgUsers();
   const { data: me } = useMe();
+  const { data: statuses } = useStatuses();
   const accounts = useQuery({
     queryKey: ["accounts", "for-picker"],
     queryFn: () => api<Account[]>("GET", "/api/accounts?limit=500"),
@@ -71,13 +72,7 @@ export function ContactsPage() {
     },
     { name: "hqPhone", label: "HQ Phone", kind: "tel", placeholder: "(555) 123-4567", span: 2 },
     { name: "linkedin", label: "LinkedIn", kind: "url", placeholder: "linkedin.com/in/…" },
-    {
-      name: "status",
-      label: "Status",
-      kind: "select",
-      required: true,
-      options: toOptions(PERSON_STATUSES),
-    },
+    statusField(statuses, "contacts"),
     ownerField(users),
     { name: "notes", label: "Notes", kind: "textarea", span: 6 },
   ];
@@ -91,7 +86,7 @@ export function ContactsPage() {
     { header: "Account", cell: (c) => accountName(c.accountId) },
     { header: "Phone", cell: (c) => formatPhone(c.cellPhone ?? c.directPhone ?? c.hqPhone) },
     { header: "Owner", cell: (c) => nameOf(users, c.ownerId) },
-    { header: "Status", cell: (c) => <StatusBadge status={c.status} /> },
+    { header: "Status", cell: (c) => <StatusBadge status={c.status} color={statusColor(statuses, "contacts", c.status)} /> },
   ];
 
   return (
@@ -104,7 +99,7 @@ export function ContactsPage() {
       searchPlaceholder="Search contacts by name, email, or phone…"
       fields={fields}
       columns={columns}
-      defaults={{ status: "New", ownerId: me?.user.id ?? "" }}
+      defaults={{ status: defaultStatus(statuses, "contacts"), ownerId: me?.user.id ?? "" }}
       headerActions={
         canUse(me, "data.import") && permissionsFor(me, "contacts").canCreate ? (
           <ImportButton kind="contacts" />

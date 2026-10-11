@@ -32,22 +32,6 @@ export const billingStatusEnum = pgEnum("billing_status", ["active", "locked", "
 export const membershipStatusEnum = pgEnum("membership_status", ["active", "ending", "removed"]);
 export const waitDayModeEnum = pgEnum("wait_day_mode", ["business", "calendar"]);
 
-export const personStatusEnum = pgEnum("person_status", [
-  "New",
-  "Active",
-  "Prospecting",
-  "Not Interested",
-  "Do Not Contact",
-]);
-export const accountStatusEnum = pgEnum("account_status", [
-  "Active",
-  "Customer",
-  "Vendor",
-  "Partner",
-  "Inactive",
-  "Do Not Contact",
-]);
-
 export const templateTypeEnum = pgEnum("template_type", ["email", "linkedin"]);
 export const stepTypeEnum = pgEnum("sequence_step_type", [
   "email",
@@ -115,6 +99,50 @@ export const orgSettings = pgTable("org_settings", {
   updatedAt: updatedAt(),
 });
 
+/**
+ * The statuses each organization offers for its records. Records store the
+ * status name; renaming an option renames it on every record that has it.
+ * "opportunities" holds the pipeline stages.
+ */
+export const STATUS_OBJECTS = ["leads", "contacts", "accounts", "opportunities"] as const;
+export type StatusObject = (typeof STATUS_OBJECTS)[number];
+/**
+ * What a status does beyond being a label.
+ *   people:        "ends_sequence" stops the person's sequence when they get
+ *                  this status; "do_not_contact" does that and also blocks
+ *                  enrolling them.
+ *   opportunities: "won" and "lost" mark the closed stages.
+ */
+export const STATUS_EFFECTS = ["none", "ends_sequence", "do_not_contact", "won", "lost"] as const;
+export type StatusEffect = (typeof STATUS_EFFECTS)[number];
+export const STATUS_COLORS = ["ocean", "teal", "sage", "mauve", "rose", "neutral"] as const;
+export type StatusColor = (typeof STATUS_COLORS)[number];
+
+export const statusOptions = pgTable(
+  "status_options",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    object: text("object").$type<StatusObject>().notNull(),
+    name: text("name").notNull(),
+    position: integer("position").notNull(),
+    /** The status a new record gets when none is chosen. One per object. */
+    isDefault: boolean("is_default").notNull().default(false),
+    effect: text("effect").$type<StatusEffect>().notNull().default("none"),
+    color: text("color").$type<StatusColor>().notNull().default("neutral"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("status_options_org_object_name_uq").on(t.orgId, t.object, sql`lower(${t.name})`),
+    uniqueIndex("status_options_one_default_uq")
+      .on(t.orgId, t.object)
+      .where(sql`${t.isDefault}`),
+  ],
+);
+
 export const roles = pgTable(
   "roles",
   {
@@ -176,7 +204,8 @@ export const leads = pgTable(
     company: text("company"),
     linkedin: text("linkedin"),
     notes: text("notes"),
-    status: personStatusEnum("status").notNull().default("New"),
+    /** One of the organization's status options for this kind of record. */
+    status: text("status").notNull(),
     convertedContactId: uuid("converted_contact_id"),
     convertedAt: timestamp("converted_at", { withTimezone: true }),
     createdAt: createdAt(),
@@ -201,7 +230,8 @@ export const accounts = pgTable(
     linkedin: text("linkedin"),
     hqPhone: text("hq_phone"),
     notes: text("notes"),
-    status: accountStatusEnum("status").notNull().default("Active"),
+    /** One of the organization's status options for accounts. */
+    status: text("status").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
@@ -231,7 +261,8 @@ export const contacts = pgTable(
     hqPhone: text("hq_phone"),
     linkedin: text("linkedin"),
     notes: text("notes"),
-    status: personStatusEnum("status").notNull().default("New"),
+    /** One of the organization's status options for this kind of record. */
+    status: text("status").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),

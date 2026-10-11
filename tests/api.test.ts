@@ -601,6 +601,164 @@ describe("converting a lead to a contact", () => {
   });
 });
 
+describe("status lists an organization defines for itself", () => {
+  // Their own organization, so renaming and deleting statuses here cannot disturb other tests.
+  let boss: Ctx;
+  let seller: Ctx;
+  let watcher: Ctx;
+  type Option = { id: string; object: string; name: string; isDefault: boolean; effect: string; inUse: number };
+  const list = async (object: string): Promise<Option[]> =>
+    (await as(boss).get("/api/statuses")).body.filter((o: Option) => o.object === object);
+  const find = async (object: string, name: string) =>
+    (await list(object)).find((o) => o.name === name)!;
+  const person = (email: string, extra: object = {}) => ({
+    firstName: "Sam",
+    lastName: "Status",
+    email,
+    ...extra,
+  });
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { waitDayMode: "calendar" });
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    watcher = await addMember(db, boss.orgId, "read_only", "Wes Watcher");
+  });
+
+  it("starts every organization with the standard lists", async () => {
+    expect((await list("leads")).map((o) => o.name)).toEqual([
+      "New",
+      "Active",
+      "Prospecting",
+      "Not Interested",
+      "Do Not Contact",
+    ]);
+    expect((await list("accounts")).find((o) => o.isDefault)?.name).toBe("Active");
+    expect((await list("opportunities")).map((o) => [o.name, o.effect]).slice(-2)).toEqual([
+      ["Closed Won", "won"],
+      ["Closed Lost", "lost"],
+    ]);
+    // Everyone can read the lists; only an admin can change them.
+    expect((await as(watcher).get("/api/statuses")).status).toBe(200);
+    const denied = await as(seller).post("/api/statuses", { object: "leads", name: "Nope" });
+    expect(denied.status).toBe(403);
+    const leadNew = await find("leads", "New");
+    expect((await as(outsider).patch(`/api/statuses/${leadNew.id}`, { name: "Hacked" })).status).toBe(404);
+  });
+
+  it("lets records use a status the organization added, and nothing else", async () => {
+    const added = await as(boss).post("/api/statuses", { object: "leads", name: "Nurture", color: "mauve" });
+    expect(added.status).toBe(201);
+    expect((await list("leads")).map((o) => o.name).at(-1)).toBe("Nurture");
+    expect((await as(boss).post("/api/statuses", { object: "leads", name: "nurture" })).status).toBe(400);
+    expect((await as(boss).post("/api/statuses", { object: "accounts", name: "X", effect: "ends_sequence" })).status).toBe(400);
+
+    const lead = await as(seller).post("/api/leads", person("nurture@status.example", { status: "nurture" }));
+    expect(lead.body.status).toBe("Nurture"); // spelled the way the list spells it
+    expect((await as(seller).post("/api/leads", person("bad@status.example", { status: "Made Up" }))).status).toBe(400);
+    expect((await as(seller).patch(`/api/leads/${lead.body.id}`, { status: "Customer" })).status).toBe(400);
+    // Nurture belongs to leads only.
+    const account = (await as(seller).post("/api/accounts", { name: "Status Co" })).body;
+    expect(account.status).toBe("Active");
+    const contact = await as(seller).post("/api/contacts", {
+      ...person("contact@status.example", { status: "Nurture" }),
+      accountId: account.id,
+    });
+    expect(contact.status).toBe(400);
+    expect((await find("leads", "Nurture")).inUse).toBe(1);
+  });
+
+  it("renames a status on every record that has it", async () => {
+    const lead = (await as(seller).post("/api/leads", person("rename@status.example", { status: "Prospecting" }))).body;
+    const option = await find("leads", "Prospecting");
+    expect((await as(boss).patch(`/api/statuses/${option.id}`, { name: "Active" })).status).toBe(400);
+    const renamed = await as(boss).patch(`/api/statuses/${option.id}`, { name: "Working" });
+    expect(renamed.status).toBe(200);
+    expect((await as(seller).get(`/api/leads/${lead.id}`)).body.status).toBe("Working");
+    const history = (await as(seller).get(`/api/history/lead/${lead.id}`)).body;
+    expect(history[0]).toMatchObject({
+      field: "status",
+      oldValue: "Prospecting",
+      newValue: "Working",
+      source: "system",
+      userId: boss.userId,
+    });
+    // Contacts have their own list, which still says Prospecting.
+    expect((await list("contacts")).map((o) => o.name)).toContain("Prospecting");
+  });
+
+  it("gives new and imported records whichever status is the default", async () => {
+    const nurture = await find("leads", "Nurture");
+    await as(boss).patch(`/api/statuses/${nurture.id}`, { isDefault: true });
+    expect((await list("leads")).filter((o) => o.isDefault).map((o) => o.name)).toEqual(["Nurture"]);
+    const lead = (await as(seller).post("/api/leads", person("default@status.example"))).body;
+    expect(lead.status).toBe("Nurture");
+    await as(seller).post("/api/import/leads", { rows: [person("imported@status.example")] });
+    expect((await as(seller).get("/api/leads?q=imported@status")).body[0].status).toBe("Nurture");
+    expect((await as(boss).del(`/api/statuses/${nurture.id}`)).status).toBe(400); // the default stays
+  });
+
+  it("ends sequences and blocks enrolling according to what a status is set to do", async () => {
+    const sequence = (await as(seller).post("/api/sequences", { name: "Status effects" })).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "One" });
+    await as(boss).post("/api/statuses", { object: "leads", name: "Went Cold", effect: "ends_sequence" });
+    await as(boss).post("/api/statuses", { object: "leads", name: "Unsubscribed", effect: "do_not_contact" });
+
+    const a = (await as(seller).post("/api/leads", person("a@effects.example"))).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: a.id });
+    await as(seller).patch(`/api/leads/${a.id}`, { status: "Went Cold" });
+    let people = (await as(seller).get(`/api/sequences/${sequence.id}/enrollments`)).body;
+    expect(people[0]).toMatchObject({ state: "ended", endReason: "status_change" });
+    // "Went Cold" ends a sequence but does not stop a new one.
+    expect((await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: a.id })).status).toBe(201);
+
+    const b = (await as(seller).post("/api/leads", person("b@effects.example", { status: "Unsubscribed" }))).body;
+    const blocked = await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: b.id });
+    expect(blocked.body).toMatchObject({ error: "do_not_contact" });
+
+    // The old name means nothing once its behavior is switched off.
+    const dnc = await find("leads", "Do Not Contact");
+    await as(boss).patch(`/api/statuses/${dnc.id}`, { effect: "none" });
+    const c = (await as(seller).post("/api/leads", person("c@effects.example", { status: "Do Not Contact" }))).body;
+    expect((await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: c.id })).status).toBe(201);
+
+    // Deleting a status in use needs somewhere to put its records, and a
+    // replacement that ends sequences ends theirs.
+    people = (await as(seller).get(`/api/sequences/${sequence.id}/enrollments`)).body;
+    expect(people.filter((p: { state: string }) => p.state === "active")).toHaveLength(2);
+    expect((await as(boss).del(`/api/statuses/${dnc.id}`)).status).toBe(400);
+    const cold = await find("leads", "Went Cold");
+    expect((await as(boss).del(`/api/statuses/${dnc.id}?replaceWith=${cold.id}`)).status).toBe(200);
+    expect((await as(seller).get(`/api/leads/${c.id}`)).body.status).toBe("Went Cold");
+    people = (await as(seller).get(`/api/sequences/${sequence.id}/enrollments`)).body;
+    const forC = people.find((p: { leadId: string; state: string }) => p.leadId === c.id);
+    expect(forC).toMatchObject({ state: "ended", endReason: "status_change" });
+    expect((await list("leads")).map((o) => o.name)).not.toContain("Do Not Contact");
+  });
+
+  it("reorders a list, and deletes an unused status outright", async () => {
+    const before = await list("accounts");
+    const ids = before.map((o) => o.id).reverse();
+    const res = await as(boss).put("/api/statuses/order", { object: "accounts", ids });
+    expect(res.body.filter((o: Option) => o.object === "accounts").map((o: Option) => o.name)).toEqual(
+      before.map((o) => o.name).reverse(),
+    );
+    expect((await as(boss).put("/api/statuses/order", { object: "accounts", ids: ids.slice(1) })).status).toBe(400);
+    const vendor = await find("accounts", "Vendor");
+    expect((await as(boss).del(`/api/statuses/${vendor.id}`)).status).toBe(200);
+    expect((await list("accounts")).map((o) => o.name)).not.toContain("Vendor");
+  });
+
+  it("keeps a converted lead's status only when contacts have the same one", async () => {
+    const account = (await as(seller).post("/api/accounts", { name: "Convert Status Co" })).body;
+    const kept = (await as(seller).post("/api/leads", person("kept@convert.example", { status: "Active" }))).body;
+    const lost = (await as(seller).post("/api/leads", person("lost@convert.example", { status: "Nurture" }))).body;
+    const k = await as(seller).post(`/api/leads/${kept.id}/convert`, { accountId: account.id });
+    const l = await as(seller).post(`/api/leads/${lost.id}/convert`, { accountId: account.id });
+    expect((await as(seller).get(`/api/contacts/${k.body.contactId}`)).body.status).toBe("Active");
+    expect((await as(seller).get(`/api/contacts/${l.body.contactId}`)).body.status).toBe("New");
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;

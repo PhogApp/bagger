@@ -2,9 +2,10 @@ import { eq } from "drizzle-orm";
 import { memberships, organizations, orgSettings, roles, users } from "../../shared/schema";
 import { PRESET_ROLES, type PresetKey } from "../auth/permissions";
 import type { Db } from "../db/types";
+import { seedStatusOptions } from "../statuses/service";
 
 /**
- * Create an organization with its settings and the four preset roles.
+ * Create an organization with its settings, starting statuses and the four preset roles.
  * Run inside a transaction; the caller adds the first Admin.
  */
 export async function createOrganization(
@@ -18,6 +19,8 @@ export async function createOrganization(
   await tx
     .insert(orgSettings)
     .values({ orgId: org.id, ...(input.timezone ? { timezone: input.timezone } : {}) });
+
+  await seedStatusOptions(tx, org.id);
 
   const roleIds = {} as Record<PresetKey, string>;
   for (const key of Object.keys(PRESET_ROLES) as PresetKey[]) {

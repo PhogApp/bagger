@@ -9,6 +9,7 @@ import {
   orgSettings,
   sequenceSteps,
   sequences,
+  statusOptions,
   stepTasks,
   templates,
   users,
@@ -102,6 +103,8 @@ async function loadSettings(
 interface Person extends MergePerson {
   status: string;
   ownerId: string;
+  /** Which status list the person's status comes from. */
+  kind: "leads" | "contacts";
 }
 
 async function loadPerson(tx: Db, ctx: Ctx, ref: PersonRef): Promise<Person> {
@@ -112,7 +115,7 @@ async function loadPerson(tx: Db, ctx: Ctx, ref: PersonRef): Promise<Person> {
       .where(and(eq(leads.id, ref.leadId), eq(leads.orgId, ctx.orgId), isNull(leads.deletedAt)));
     if (!lead) throw new SequenceError("person_not_found");
     if (lead.convertedContactId) throw new SequenceError("person_converted");
-    return lead;
+    return { ...lead, kind: "leads" };
   }
   const [row] = await tx
     .select({ contact: contacts, accountName: accounts.name })
@@ -126,11 +129,23 @@ async function loadPerson(tx: Db, ctx: Ctx, ref: PersonRef): Promise<Person> {
       ),
     );
   if (!row) throw new SequenceError("person_not_found");
-  return { ...row.contact, company: row.accountName };
+  return { ...row.contact, company: row.accountName, kind: "contacts" };
 }
 
 async function isDoNotContact(tx: Db, ctx: Ctx, person: Person): Promise<boolean> {
-  if (person.status === "Do Not Contact") return true;
+  // Any status the organization has marked "do not contact", whatever it is called.
+  const [marked] = await tx
+    .select({ id: statusOptions.id })
+    .from(statusOptions)
+    .where(
+      and(
+        eq(statusOptions.orgId, ctx.orgId),
+        eq(statusOptions.object, person.kind),
+        eq(statusOptions.name, person.status),
+        eq(statusOptions.effect, "do_not_contact"),
+      ),
+    );
+  if (marked) return true;
   const email = person.email.trim().toLowerCase();
   const domain = email.split("@")[1] ?? "";
   const [hit] = await tx

@@ -26,12 +26,26 @@ const TONES: Record<string, string> = {
   Bounced: ROSE,
 };
 
-export function StatusBadge({ status }: { status: string }) {
+/** The colors an admin can give a status, by the key stored with it. */
+export const STATUS_TONES: Record<string, string> = {
+  ocean: OCEAN,
+  teal: TEAL,
+  sage: SAGE,
+  mauve: MAUVE,
+  rose: ROSE,
+  neutral: NEUTRAL,
+};
+
+/**
+ * `color` is the key chosen in Admin for an organization's own status. Without
+ * it the badge falls back to Bagger's built-in words (Paused, Replied, …).
+ */
+export function StatusBadge({ status, color }: { status: string; color?: string }) {
   return (
     <span
       className={cn(
         "inline-flex whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium",
-        TONES[status] ?? NEUTRAL,
+        (color && STATUS_TONES[color]) ?? TONES[status] ?? NEUTRAL,
       )}
     >
       {status}

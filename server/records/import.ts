@@ -13,6 +13,7 @@ import {
 import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
 import { AccountIndex, domainOf, nameKey } from "./duplicates";
+import { defaultStatus } from "../statuses/service";
 import { accountInput, contactInput, leadInput, optionalUrl } from "./index";
 
 /**
@@ -266,6 +267,7 @@ export async function importRecords(
                 ownerId: newOwnerId,
                 name: accountName,
                 website: accountWebsite ?? null,
+                status: await defaultStatus(tx, actor.orgId, "accounts"),
               })
               .returning({ id: accounts.id, ownerId: accounts.ownerId, name: accounts.name });
             await tx.insert(fieldHistory).values({
@@ -289,12 +291,13 @@ export async function importRecords(
     result.created = inserts.length;
     if (mode === "check") return;
 
-    // ---- 4. create the new records
+    // ---- 4. create the new records, with the organization's default status
+    const status = await defaultStatus(tx, actor.orgId, kind);
     for (const batch of chunks(inserts, 500)) {
       const inserted = await tx
         .insert(table)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .values(batch.map((v) => ({ ...v, orgId: actor.orgId, ownerId: newOwnerId })) as any)
+        .values(batch.map((v) => ({ ...v, status, orgId: actor.orgId, ownerId: newOwnerId })) as any)
         .returning({ id: table.id });
       await tx.insert(fieldHistory).values(
         inserted.map((record) => ({

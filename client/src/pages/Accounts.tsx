@@ -1,9 +1,9 @@
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ImportButton } from "@/components/ImportRecords";
-import { canUse, permissionsFor, useMe, useOrgUsers } from "@/lib/api";
+import { canUse, permissionsFor, useMe, useStatuses, useOrgUsers } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
-import { ACCOUNT_STATUSES, nameOf, ownerField, toOptions } from "./shared";
+import { defaultStatus, nameOf, ownerField, statusColor, statusField } from "./shared";
 
 export interface Account {
   id: string;
@@ -17,6 +17,7 @@ export interface Account {
 export function AccountsPage() {
   const { data: users } = useOrgUsers();
   const { data: me } = useMe();
+  const { data: statuses } = useStatuses();
 
   const fields: Field[] = [
     { name: "name", label: "Account Name", required: true, span: 6 },
@@ -28,14 +29,7 @@ export function AccountsPage() {
       placeholder: "linkedin.com/company/…",
     },
     { name: "hqPhone", label: "HQ Phone", kind: "tel", placeholder: "(555) 123-4567", span: 2 },
-    {
-      name: "status",
-      label: "Status",
-      kind: "select",
-      required: true,
-      options: toOptions(ACCOUNT_STATUSES),
-      span: 2,
-    },
+    { ...statusField(statuses, "accounts"), span: 2 },
     { ...ownerField(users), span: 2 },
     { name: "notes", label: "Notes", kind: "textarea", span: 6 },
   ];
@@ -44,7 +38,7 @@ export function AccountsPage() {
     { header: "Name", cell: (a) => <span className="font-medium">{a.name}</span> },
     { header: "Website", cell: (a) => a.website ?? "—" },
     { header: "Owner", cell: (a) => nameOf(users, a.ownerId) },
-    { header: "Status", cell: (a) => <StatusBadge status={a.status} /> },
+    { header: "Status", cell: (a) => <StatusBadge status={a.status} color={statusColor(statuses, "accounts", a.status)} /> },
     { header: "Created", cell: (a) => formatDate(a.createdAt) },
   ];
 
@@ -58,7 +52,7 @@ export function AccountsPage() {
       searchPlaceholder="Search accounts by name or website…"
       fields={fields}
       columns={columns}
-      defaults={{ status: "Active", ownerId: me?.user.id ?? "" }}
+      defaults={{ status: defaultStatus(statuses, "accounts"), ownerId: me?.user.id ?? "" }}
       headerActions={
         canUse(me, "data.import") && permissionsFor(me, "accounts").canCreate ? (
           <ImportButton kind="accounts" />

@@ -26,6 +26,7 @@ import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
 import * as settings from "../settings/service";
+import * as statuses from "../statuses/service";
 
 /**
  * Works out who is making a request. Production uses Clerk; tests pass a
@@ -178,6 +179,23 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.put("/users/:id/role", async (req, res) => {
     await settings.changeUserRole(db, actorOf(req), id(req), req.body, options.onRoleChange);
     res.status(204).end();
+  });
+
+  // ---- status lists (read by everyone, changed in Admin)
+  api.get("/statuses", async (req, res) => {
+    res.json(await statuses.listStatuses(db, actorOf(req)));
+  });
+  api.post("/statuses", async (req, res) => {
+    res.status(201).json(await statuses.createStatus(db, actorOf(req), req.body));
+  });
+  api.put("/statuses/order", async (req, res) => {
+    res.json(await statuses.reorderStatuses(db, actorOf(req), req.body));
+  });
+  api.patch("/statuses/:id", async (req, res) => {
+    res.json(await statuses.updateStatus(db, actorOf(req), id(req), req.body));
+  });
+  api.delete("/statuses/:id", async (req, res) => {
+    res.json(await statuses.deleteStatus(db, actorOf(req), id(req), req.query));
   });
 
   // ---- the Organization tab (owner only)
