@@ -29,6 +29,13 @@
       "when": 1791725664883,
       "tag": "0003_status_options",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791726782156,
+      "tag": "0004_opportunities",
+      "breakpoints": true
     }
   ]
 }

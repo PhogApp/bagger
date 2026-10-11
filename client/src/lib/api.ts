@@ -113,6 +113,8 @@ export interface StatusOption {
   isDefault: boolean;
   effect: "none" | "ends_sequence" | "do_not_contact" | "won" | "lost";
   color: StatusColor;
+  /** Opportunity stages only: the chance of winning, 0 to 100. */
+  probability: number | null;
   /** How many records have this status. */
   inUse: number;
 }
@@ -126,7 +128,7 @@ export function useStatuses() {
   });
 }
 
-type ObjectName = "leads" | "contacts" | "accounts" | "templates" | "sequences";
+type ObjectName = "leads" | "contacts" | "accounts" | "opportunities" | "templates" | "sequences";
 
 /** Mirrors the server's checks so the screens only offer what will succeed. */
 export function permissionsFor(me: Me | undefined, object: ObjectName) {

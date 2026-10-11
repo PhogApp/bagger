@@ -52,6 +52,7 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   hidden?: SQL;
   /** A reason this row can no longer be changed or deleted, or null. */
   frozen?: (row: TRow) => string | null;
+  afterCreate?: (tx: Db, actor: Actor, row: TRow) => Promise<void>;
   afterUpdate?: (tx: Db, actor: Actor, before: TRow, after: TRow) => Promise<void>;
   afterDelete?: (tx: Db, actor: Actor, row: TRow) => Promise<void>;
 }
@@ -153,6 +154,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
           .values({ ...values, orgId: actor.orgId, ownerId: values.ownerId ?? actor.userId })
           .returning();
         await recordLifecycle(tx, actor, cfg.recordType, row.id, "create", options.source);
+        await cfg.afterCreate?.(tx, actor, row as TRow);
         return row as TRow;
       });
     },

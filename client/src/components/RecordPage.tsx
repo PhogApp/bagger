@@ -39,7 +39,7 @@ export interface Option {
 export interface Field {
   name: string;
   label: string;
-  kind?: "text" | "email" | "tel" | "url" | "textarea" | "select";
+  kind?: "text" | "email" | "tel" | "url" | "date" | "textarea" | "select";
   required?: boolean;
   options?: Option[];
   placeholder?: string;
@@ -64,7 +64,7 @@ interface BaseRecord {
 }
 
 export interface RecordPageProps<T extends BaseRecord> {
-  object: "leads" | "contacts" | "accounts" | "templates" | "sequences";
+  object: "leads" | "contacts" | "accounts" | "opportunities" | "templates" | "sequences";
   /** Name used by audit history, e.g. "lead". */
   recordType: string;
   title: string;
@@ -80,6 +80,8 @@ export interface RecordPageProps<T extends BaseRecord> {
   onRowOpen?: (row: T) => void;
   /** Extra buttons in the edit dialog for one record, e.g. Convert. Call `close` when done. */
   recordActions?: (row: T, close: () => void) => ReactNode;
+  /** Draws the rows some other way than the table, e.g. a board. Call `open` to edit one. */
+  renderList?: (rows: T[], open: (row: T) => void) => ReactNode;
   /** Extra buttons beside "Add", e.g. Import. */
   headerActions?: ReactNode;
   /**
@@ -432,6 +434,8 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                     can.canCreate ? ` Add your first ${singular.toLowerCase()} to get started.` : ""
                   }`}
             </p>
+          ) : props.renderList ? (
+            props.renderList(rows, openRow)
           ) : (
             <Table>
               <TableHeader>

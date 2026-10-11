@@ -1,5 +1,6 @@
 import {
   Building2,
+  CircleDollarSign,
   FileText,
   Landmark,
   ListOrdered,
@@ -20,6 +21,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/leads", label: "Leads", icon: UserPlus },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/accounts", label: "Accounts", icon: Building2 },
+  { href: "/opportunities", label: "Opportunities", icon: CircleDollarSign },
   { href: "/templates", label: "Templates", icon: FileText },
   { href: "/sequences", label: "Sequences", icon: ListOrdered },
 ];

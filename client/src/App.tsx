@@ -6,6 +6,7 @@ import { useApi, useMe } from "./lib/api";
 import { AccountsPage } from "./pages/Accounts";
 import { ContactsPage } from "./pages/Contacts";
 import { LeadsPage } from "./pages/Leads";
+import { OpportunitiesPage } from "./pages/Opportunities";
 import { OrganizationPage } from "./pages/Organization";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
@@ -66,6 +67,7 @@ export function App() {
         <Route path="/leads" component={LeadsPage} />
         <Route path="/contacts" component={ContactsPage} />
         <Route path="/accounts" component={AccountsPage} />
+        <Route path="/opportunities" component={OpportunitiesPage} />
         <Route path="/templates" component={TemplatesPage} />
         <Route path="/sequences" component={SequencesPage} />
         <Route path="/sequences/:id" component={SequenceDetailPage} />

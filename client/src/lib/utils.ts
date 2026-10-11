@@ -30,3 +30,22 @@ export function formatDateTime(value: string): string {
     minute: "2-digit",
   });
 }
+
+/** "2026-12-15" as "Dec 15, 2026", without shifting it by the viewer's time zone. */
+export function formatDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/** Whole dollars: 12500 as "$12,500". */
+export function formatMoney(amount: number): string {
+  return amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+}
