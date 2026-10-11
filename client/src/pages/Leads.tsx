@@ -1,7 +1,7 @@
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
-import { ImportLeadsButton } from "@/components/ImportLeads";
+import { ImportButton } from "@/components/ImportRecords";
 import { canUse, permissionsFor, useMe, useOrgUsers } from "@/lib/api";
 import { formatPhone } from "@/lib/utils";
 import { nameOf, ownerField, PERSON_STATUSES, toOptions } from "./shared";
@@ -76,7 +76,7 @@ export function LeadsPage() {
       defaults={{ status: "New", ownerId: me?.user.id ?? "" }}
       headerActions={
         canUse(me, "data.import") && permissionsFor(me, "leads").canCreate ? (
-          <ImportLeadsButton />
+          <ImportButton kind="leads" />
         ) : undefined
       }
       bulkActions={

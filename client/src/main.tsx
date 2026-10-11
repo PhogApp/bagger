@@ -43,6 +43,11 @@ const CLERK_APPEARANCE = {
     // Leaving or deleting an organization here would strand its Bagger data.
     // Ownership changes and cancelling are done on Bagger's Organization page.
     profileSection__organizationDanger: { display: "none" },
+    // "Delete account" would remove someone's sign-in while their Bagger records,
+    // seat and (for an owner) organization stay behind. Removing a person is an
+    // Admin's job. This only hides the button; the setting that truly turns it
+    // off is in the Clerk dashboard.
+    profileSection__danger: { display: "none" },
   },
 };
 

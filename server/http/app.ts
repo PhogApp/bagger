@@ -20,7 +20,7 @@ import {
   sequenceService,
   templateService,
 } from "../records";
-import { importLeads } from "../records/import";
+import { IMPORT_KINDS, importRecords } from "../records/import";
 import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
@@ -189,8 +189,10 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     res.json(await seq.sequenceStats(db, actorOf(req)));
   });
 
-  api.post("/leads/import", async (req, res) => {
-    res.json(await importLeads(db, actorOf(req), req.body));
+  api.post("/import/:kind", async (req, res) => {
+    const kind = z.enum(IMPORT_KINDS).safeParse(req.params.kind);
+    if (!kind.success) throw new NotFoundError();
+    res.json(await importRecords(db, actorOf(req), kind.data, req.body));
   });
   crud(api, "/leads", db, leadService);
   crud(api, "/accounts", db, accountService);
