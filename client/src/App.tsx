@@ -1,10 +1,11 @@
-import { Redirect, Route, Switch } from "wouter";
+import { Route, Switch } from "wouter";
 import { AppLayout } from "./components/AppLayout";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useApi, useMe } from "./lib/api";
 import { AccountsPage } from "./pages/Accounts";
 import { ContactsPage } from "./pages/Contacts";
+import { DashboardPage } from "./pages/Dashboard";
 import { LeadsPage } from "./pages/Leads";
 import { OpportunitiesPage } from "./pages/Opportunities";
 import { OrganizationPage } from "./pages/Organization";
@@ -74,9 +75,7 @@ export function App() {
         <Route path="/settings" component={SettingsPage} />
         <Route path="/admin" component={AdminPage} />
         <Route path="/organization" component={OrganizationPage} />
-        <Route path="/">
-          <Redirect to="/leads" />
-        </Route>
+        <Route path="/" component={DashboardPage} />
         <Route>
           <Notice title="Page not found">That address doesn't match a page in Bagger.</Notice>
         </Route>

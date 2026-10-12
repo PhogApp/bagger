@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Columns3, List } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
+import { ActivityTimeline } from "@/components/ActivityTimeline";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge, STATUS_TONES } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -292,6 +293,13 @@ export function OpportunitiesPage() {
       defaults={{ status: defaultStatus(statuses, "opportunities"), ownerId: me?.user.id ?? "" }}
       headerActions={toggle}
       renderList={view === "board" ? board : undefined}
+      tabs={[
+        {
+          value: "activity",
+          label: "Activity",
+          render: (r) => <ActivityTimeline about={{ opportunityId: r.id }} />,
+        },
+      ]}
       describe={(o) => o.name}
     />
   );

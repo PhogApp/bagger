@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
+import { ActivityTimeline } from "@/components/ActivityTimeline";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
@@ -112,6 +113,13 @@ export function ContactsPage() {
             )
           : undefined
       }
+      tabs={[
+        {
+          value: "activity",
+          label: "Activity",
+          render: (r) => <ActivityTimeline about={{ contactId: r.id }} />,
+        },
+      ]}
       describe={(c) => `${c.firstName} ${c.lastName}`}
     />
   );

@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { Plus } from "lucide-react";
 import { Link } from "wouter";
 import { StatusBadge } from "@/components/StatusBadge";
-import { useApi, useStatuses, type StatusObject } from "@/lib/api";
+import { permissionsFor, useApi, useMe, useStatuses, type StatusObject } from "@/lib/api";
 import { formatDay, formatMoney } from "@/lib/utils";
 
 /**
@@ -28,6 +29,9 @@ interface OpportunityRow {
 
 function Section(props: {
   title: string;
+  /** Opens a new record already on this account. */
+  addHref?: string;
+  addLabel?: string;
   count: number | undefined;
   loading: boolean;
   error: Error | null;
@@ -36,12 +40,23 @@ function Section(props: {
 }) {
   return (
     <section className="mt-6">
-      <h3 className="mb-2 text-sm font-semibold">
-        {props.title}
-        {props.count !== undefined && (
-          <span className="ml-2 font-normal text-muted-foreground">{props.count}</span>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">
+          {props.title}
+          {props.count !== undefined && (
+            <span className="ml-2 font-normal text-muted-foreground">{props.count}</span>
+          )}
+        </h3>
+        {props.addHref && (
+          <Link
+            href={props.addHref}
+            className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+            {props.addLabel}
+          </Link>
         )}
-      </h3>
+      </div>
       {props.error ? (
         <p className="text-sm text-destructive">{props.error.message}</p>
       ) : props.loading ? (
@@ -62,6 +77,7 @@ const rowClass =
 export function AccountRelated({ accountId }: { accountId: string }) {
   const api = useApi();
   const { data: statuses } = useStatuses();
+  const { data: me } = useMe();
   const color = (object: StatusObject, name: string) =>
     statuses?.find((s) => s.object === object && s.name === name)?.color;
 
@@ -79,6 +95,12 @@ export function AccountRelated({ accountId }: { accountId: string }) {
     <div className="mt-2 border-t">
       <Section
         title="Contacts"
+        addHref={
+          permissionsFor(me, "contacts").canCreate
+            ? `/contacts?new=1&accountId=${accountId}`
+            : undefined
+        }
+        addLabel="Add contact"
         count={contacts.data?.length}
         loading={contacts.isLoading}
         error={contacts.error}
@@ -103,6 +125,12 @@ export function AccountRelated({ accountId }: { accountId: string }) {
 
       <Section
         title="Opportunities"
+        addHref={
+          permissionsFor(me, "opportunities").canCreate
+            ? `/opportunities?new=1&accountId=${accountId}`
+            : undefined
+        }
+        addLabel="Add opportunity"
         count={opportunities.data?.length}
         loading={opportunities.isLoading}
         error={opportunities.error}

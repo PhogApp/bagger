@@ -1,3 +1,4 @@
+import { ActivityTimeline } from "@/components/ActivityTimeline";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
@@ -88,6 +89,13 @@ export function LeadsPage() {
           <ConvertLeadButton lead={lead} onDone={close} />
         ) : null
       }
+      tabs={[
+        {
+          value: "activity",
+          label: "Activity",
+          render: (r) => <ActivityTimeline about={{ leadId: r.id }} />,
+        },
+      ]}
       describe={(l) => `${l.firstName} ${l.lastName}`}
     />
   );

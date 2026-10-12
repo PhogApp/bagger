@@ -67,8 +67,8 @@ export interface CreateOptions {
 
 export interface ListOptions {
   q?: string;
-  /** Only records on this account, for record types that belong to one. */
-  accountId?: string;
+  /** Exact matches on the columns named in the config's `filters`, e.g. { accountId }. */
+  where?: Record<string, string | undefined>;
   limit?: number;
   offset?: number;
 }
@@ -114,10 +114,11 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
       const where = [inOrg(actor)];
       if (cfg.hidden) where.push(cfg.hidden);
       if (scope === "own") where.push(eq(t.ownerId, actor.userId));
-      if (options.accountId) {
-        const column = cfg.filters?.accountId;
-        if (!column) throw new ValidationError(`${cfg.object} cannot be listed by account`);
-        where.push(eq(column, options.accountId));
+      for (const [name, value] of Object.entries(options.where ?? {})) {
+        if (value === undefined) continue;
+        const column = cfg.filters?.[name];
+        if (!column) throw new ValidationError(`${cfg.object} cannot be listed by ${name}`);
+        where.push(eq(column, value));
       }
       const q = options.q?.trim();
       if (q && cfg.search.length > 0) {
