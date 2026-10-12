@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
 import { ArrowRightLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
@@ -102,6 +103,7 @@ function ConvertDialog({
       onClose();
       onDone();
       navigate(`/contacts/${result.contactId}`);
+      toast.success(`${lead.firstName} ${lead.lastName} is now a contact`);
     },
   });
 

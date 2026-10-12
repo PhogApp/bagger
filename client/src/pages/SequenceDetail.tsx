@@ -39,6 +39,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { canUse, permissionsFor, useApi, useMe, useOrgUsers } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import { cn, formatDate } from "@/lib/utils";
 import { sequenceFields, useSequenceStats, type Sequence } from "./Sequences";
 import { nameOf } from "./shared";
@@ -199,6 +200,7 @@ function StepEditor({
       await queryClient.invalidateQueries({ queryKey: ["sequence", sequenceId] });
       await queryClient.invalidateQueries({ queryKey: ["history", "sequence", sequenceId] });
       onClose();
+      toast.success(step === "new" ? "Step added" : "Step saved");
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -434,19 +436,24 @@ function StepsPanel({
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const act = useMutation({
-    mutationFn: (call: () => Promise<unknown>) => call(),
-    onSuccess: async () => {
+    mutationFn: (job: { call: () => Promise<unknown>; done: string }) => job.call(),
+    onSuccess: async (_result, job) => {
       setDeleting(null);
       await queryClient.invalidateQueries({ queryKey: ["sequence", sequence.id] });
       await queryClient.invalidateQueries({ queryKey: ["history", "sequence", sequence.id] });
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      toast.success(job.done);
     },
+    onError: (e: Error) => toast.error(e.message),
   });
   const templateName = (id: string | null) => templates.find((t) => t.id === id)?.name;
   const move = (index: number, by: -1 | 1) => {
     const order = steps.map((s) => s.id);
     [order[index], order[index + by]] = [order[index + by], order[index]];
-    act.mutate(() => api("PUT", `/api/sequences/${sequence.id}/steps/order`, { stepIds: order }));
+    act.mutate({
+      call: () => api("PUT", `/api/sequences/${sequence.id}/steps/order`, { stepIds: order }),
+      done: `${steps[index].title} moved ${by < 0 ? "up" : "down"}`,
+    });
   };
 
   // The day each step comes due for someone who moves along without delay.
@@ -459,11 +466,6 @@ function StepsPanel({
         Changes never rebuild anyone's tasks. Each person picks up the current steps when they
         finish the one they're on.
       </p>
-      {act.error && (
-        <p role="alert" className="text-sm text-destructive">
-          {act.error.message}
-        </p>
-      )}
       {steps.length === 0 && editing !== "new" && (
         <p className="rounded-lg border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">
           No steps yet. Add the first step to start building this sequence.
@@ -526,7 +528,12 @@ function StepsPanel({
                         size="sm"
                         variant="destructive"
                         disabled={act.isPending}
-                        onClick={() => act.mutate(() => api("DELETE", `/api/steps/${step.id}`))}
+                        onClick={() =>
+                          act.mutate({
+                            call: () => api("DELETE", `/api/steps/${step.id}`),
+                            done: `${step.title} deleted`,
+                          })
+                        }
                       >
                         Delete step
                       </Button>
@@ -617,12 +624,14 @@ function PeoplePanel({
   const [search, setSearch] = useState("");
   const [show, setShow] = useState<"all" | "active" | "paused" | "ended">("all");
   const act = useMutation({
-    mutationFn: (call: () => Promise<unknown>) => call(),
-    onSuccess: async () => {
+    mutationFn: (job: { call: () => Promise<unknown>; done: string }) => job.call(),
+    onSuccess: async (_result, job) => {
       await queryClient.invalidateQueries({ queryKey: ["sequence", sequenceId] });
       await queryClient.invalidateQueries({ queryKey: ["sequences", "stats"] });
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      toast.success(job.done);
     },
+    onError: (e: Error) => toast.error(e.message),
   });
   const canManage = (ownerId: string) =>
     canUse(me, "sequences.enroll") &&
@@ -679,11 +688,6 @@ function PeoplePanel({
           ))}
         </div>
       </div>
-      {act.error && (
-        <p role="alert" className="border-b px-4 py-2 text-sm text-destructive">
-          {act.error.message}
-        </p>
-      )}
       {shown.length === 0 ? (
         <p className="p-8 text-center text-sm text-muted-foreground">
           {enrollments.length === 0 ? "Nobody is enrolled yet." : "Nobody here matches."}
@@ -743,9 +747,18 @@ function PeoplePanel({
                           if (!action) return;
                           const path = `/api/enrollments/${e.id}`;
                           if (action === "pause" || action === "resume") {
-                            act.mutate(() => api("POST", `${path}/${action}`));
+                            act.mutate({
+                              call: () => api("POST", `${path}/${action}`),
+                              done: `${name} ${action === "pause" ? "paused" : "resumed"}`,
+                            });
                           } else {
-                            act.mutate(() => api("POST", `${path}/stop`, { reason: action }));
+                            act.mutate({
+                              call: () => api("POST", `${path}/stop`, { reason: action }),
+                              done:
+                                action === "removed"
+                                  ? `${name} removed from the sequence`
+                                  : `${name}: ${END_REASONS[action].toLowerCase()}. Sequence ended.`,
+                            });
                           }
                         }}
                       >
@@ -788,7 +801,7 @@ function EnrollDialog({ sequenceId, onClose }: { sequenceId: string; onClose: ()
   const [kind, setKind] = useState<"leads" | "contacts">("leads");
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
-  const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setQ(search.trim()), 250);
@@ -806,12 +819,13 @@ function EnrollDialog({ sequenceId, onClose }: { sequenceId: string; onClose: ()
         [kind === "leads" ? "leadId" : "contactId"]: person.id,
       }).then(() => person),
     onSuccess: async (person) => {
-      setMessage({ tone: "ok", text: `${person.firstName} ${person.lastName} enrolled.` });
+      setError(null);
+      toast.success(`${person.firstName} ${person.lastName} enrolled`);
       await queryClient.invalidateQueries({ queryKey: ["sequence", sequenceId] });
       await queryClient.invalidateQueries({ queryKey: ["sequences", "stats"] });
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },
-    onError: (e: Error) => setMessage({ tone: "error", text: e.message }),
+    onError: (e: Error) => setError(e.message),
   });
 
   return (
@@ -841,14 +855,9 @@ function EnrollDialog({ sequenceId, onClose }: { sequenceId: string; onClose: ()
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        {message && (
-          <p
-            role="status"
-            className={
-              message.tone === "ok" ? "text-sm text-emerald-700" : "text-sm text-destructive"
-            }
-          >
-            {message.text}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
           </p>
         )}
         <ul className="max-h-72 divide-y overflow-y-auto rounded-md border">

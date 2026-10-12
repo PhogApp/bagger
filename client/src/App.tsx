@@ -3,6 +3,7 @@ import { AppLayout } from "./components/AppLayout";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useApi, useMe } from "./lib/api";
+import { Toaster } from "./lib/toast";
 import { AccountDetailPage, AccountsPage } from "./pages/Accounts";
 import { ActivitiesPage } from "./pages/Activities";
 import { ContactDetailPage, ContactsPage } from "./pages/Contacts";
@@ -93,5 +94,10 @@ export function App() {
       </Switch>
     );
   }
-  return <AppLayout>{page}</AppLayout>;
+  return (
+    <>
+      <AppLayout>{page}</AppLayout>
+      <Toaster />
+    </>
+  );
 }

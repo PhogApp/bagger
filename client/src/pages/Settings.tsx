@@ -16,6 +16,7 @@ import { FieldSettings } from "@/components/FieldSettings";
 import { StatusSettings } from "@/components/StatusSettings";
 import { canUse, isAdmin, useApi, useMe, type OrgUser } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { toast } from "@/lib/toast";
 
 interface MySettings {
   timezone: string | null;
@@ -66,21 +67,6 @@ function Section({
   );
 }
 
-function Saved({ show, error }: { show: boolean; error: string | null }) {
-  if (error) {
-    return (
-      <span role="alert" className="text-sm text-destructive">
-        {error}
-      </span>
-    );
-  }
-  return show ? (
-    <span role="status" className="text-sm text-muted-foreground">
-      Saved
-    </span>
-  ) : null;
-}
-
 function MySettingsSection() {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -102,7 +88,9 @@ function MySettingsSection() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["me", "settings"] });
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      toast.success("Time zone saved");
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   return (
@@ -136,7 +124,6 @@ function MySettingsSection() {
         >
           Save
         </Button>
-        <Saved show={save.isSuccess} error={save.error?.message ?? null} />
       </div>
     </Section>
   );
@@ -159,7 +146,11 @@ function OrganizationSection({ canEdit }: { canEdit: boolean }) {
 
   const save = useMutation({
     mutationFn: () => api<OrgSettings>("PATCH", "/api/settings", form),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success("Organization settings saved");
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   if (!form) return null;
@@ -233,7 +224,6 @@ function OrganizationSection({ canEdit }: { canEdit: boolean }) {
           <Button onClick={() => save.mutate()} disabled={save.isPending || unchanged}>
             Save
           </Button>
-          <Saved show={save.isSuccess} error={save.error?.message ?? null} />
         </div>
       )}
     </Section>
@@ -250,14 +240,17 @@ function UsersSection({ canManage }: { canManage: boolean }) {
       api<(OrgUser & { roleId: string; isOwner: boolean })[]>("GET", "/api/users"),
   });
   const roles = useQuery({ queryKey: ["roles"], queryFn: () => api<Role[]>("GET", "/api/roles") });
-  const [error, setError] = useState<string | null>(null);
   const { manageMembers } = useSession();
 
   const change = useMutation({
     mutationFn: ({ userId, roleId }: { userId: string; roleId: string }) =>
       api("PUT", `/api/users/${userId}/role`, { roleId }),
-    onMutate: () => setError(null),
-    onError: (e: Error) => setError(e.message),
+    onSuccess: (_result, { userId, roleId }) => {
+      const who = users.data?.find((u) => u.id === userId)?.name ?? "Their";
+      const role = roles.data?.find((r) => r.id === roleId)?.name ?? "the new role";
+      toast.success(`${who} is now ${/^[AEIOU]/i.test(role) ? "an" : "a"} ${role}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: ["users"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -280,11 +273,6 @@ function UsersSection({ canManage }: { canManage: boolean }) {
             Invite or remove people
           </Button>
         </div>
-      )}
-      {error && (
-        <p role="alert" className="mb-3 text-sm text-destructive">
-          {error}
-        </p>
       )}
       <Table>
         <TableHeader>

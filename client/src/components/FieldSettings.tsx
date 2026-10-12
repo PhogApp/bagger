@@ -25,6 +25,7 @@ import {
   type LayoutObject,
 } from "@/lib/fields";
 import { cn } from "@/lib/utils";
+import { toast } from "@/lib/toast";
 
 /**
  * Admin → Fields: every field of a record type, Bagger's own and the
@@ -97,14 +98,16 @@ export function FieldSettings() {
   const [editing, setEditing] = useState<CustomField | null>(null);
 
   const change = useMutation({
-    mutationFn: (call: { method: string; path: string; body: unknown }) =>
+    mutationFn: (call: { method: string; path: string; body: unknown; done?: string }) =>
       api<FieldSetup>(call.method, call.path, call.body),
-    onSuccess: async (fresh) => {
+    onSuccess: async (fresh, call) => {
       queryClient.setQueryData(["fields"], fresh);
+      toast.success(call.done ?? "Layout saved");
       for (const key of ["leads", "contacts", "accounts", "opportunities"]) {
         await queryClient.invalidateQueries({ queryKey: [key], refetchType: "none" });
       }
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   if (loadError) return <p className="text-sm text-destructive">{loadError.message}</p>;
@@ -118,7 +121,9 @@ export function FieldSettings() {
     queryClient.setQueryData(["fields"], { ...setup, layouts: { ...setup.layouts, [object]: entries } });
     change.mutate(
       { method: "PUT", path: "/api/fields/layout", body: { object, entries } },
-      { onError: () => queryClient.invalidateQueries({ queryKey: ["fields"] }) },
+      {
+        onError: () => void queryClient.invalidateQueries({ queryKey: ["fields"] }),
+      },
     );
   };
   const move = (i: number, by: -1 | 1) => {
@@ -262,6 +267,7 @@ export function FieldSettings() {
                             method: "PATCH",
                             path: `/api/fields/${row.custom!.id}`,
                             body: { archived: true },
+                            done: `${row.label} archived. Find it under Archived to bring it back.`,
                           })
                         }
                       >
@@ -290,12 +296,6 @@ export function FieldSettings() {
           </Button>
         )}
 
-        {change.error && (
-          <p role="alert" className="text-sm text-destructive">
-            {change.error.message}
-          </p>
-        )}
-
         {archived.length > 0 && (
           <div>
             <h3 className="mb-1 mt-4 text-sm font-semibold">Archived</h3>
@@ -318,6 +318,7 @@ export function FieldSettings() {
                         method: "PATCH",
                         path: `/api/fields/${f.id}`,
                         body: { archived: false },
+                        done: `${f.label} restored`,
                       })
                     }
                   >
@@ -369,7 +370,10 @@ function AddField({
         required,
         ...(PICKLISTS.includes(type) ? { options } : {}),
       }),
-    onSuccess: (fresh) => onDone(fresh),
+    onSuccess: (fresh) => {
+      onDone(fresh);
+      toast.success(`${label} added`);
+    },
   });
   return (
     <form
@@ -504,7 +508,10 @@ function EditField({
       }
       return api<FieldSetup>("PATCH", `/api/fields/${field.id}`, body);
     },
-    onSuccess: (fresh) => onClose(fresh),
+    onSuccess: (fresh) => {
+      onClose(fresh);
+      toast.success(`${label} saved`);
+    },
   });
   const update = (i: number, patch: Partial<Choice>) =>
     setChoices((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));

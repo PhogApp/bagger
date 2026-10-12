@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { canUse, useApi, useMe, useOrgUsers } from "@/lib/api";
 import { cn, formatDateTime, formatDay, formatMoney } from "@/lib/utils";
+import { toast } from "@/lib/toast";
 
 /**
  * The report builder: choose a record type, columns, filters, groupings and
@@ -347,14 +348,18 @@ export function ReportBuilderPage({ params }: { params: { id: string } }) {
     onSuccess: async ({ id }) => {
       await queryClient.invalidateQueries({ queryKey: ["reports", "saved"] });
       if (isNew) navigate(`/reports/custom/${id}`, { replace: true });
+      toast.success(`${name.trim() || "Report"} saved`);
     },
+    onError: (e: Error) => toast.error(e.message),
   });
   const remove = useMutation({
     mutationFn: () => api("DELETE", `/api/reports/saved/${params.id}`),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["reports", "saved"] });
       navigate("/reports?tab=custom");
+      toast.success(`${name.trim() || "Report"} deleted`);
     },
+    onError: (e: Error) => toast.error(e.message),
   });
   const exportAll = useMutation({
     mutationFn: () =>
@@ -382,6 +387,7 @@ export function ReportBuilderPage({ params }: { params: { id: string } }) {
       link.click();
       URL.revokeObjectURL(url);
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   if (catalog.error || saved.error) {
@@ -461,16 +467,6 @@ export function ReportBuilderPage({ params }: { params: { id: string } }) {
             )}
           </div>
         </div>
-        {(save.error || remove.error || exportAll.error) && (
-          <p role="alert" className="mt-2 text-sm text-destructive">
-            {(save.error ?? remove.error ?? exportAll.error)?.message}
-          </p>
-        )}
-        {save.isSuccess && !save.isPending && (
-          <p role="status" className="mt-2 text-sm text-brand-teal">
-            Saved.
-          </p>
-        )}
       </div>
 
       <div className="grid gap-6 p-6 lg:grid-cols-[20rem_minmax(0,1fr)]">

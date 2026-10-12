@@ -12,6 +12,7 @@ import {
   type StatusOption,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { toast } from "@/lib/toast";
 
 /**
  * The Admin section where an organization defines its own statuses for
@@ -77,10 +78,12 @@ export function StatusSettings({ canEdit }: { canEdit: boolean }) {
 
   // Every change answers with the full, fresh lists.
   const change = useMutation({
-    mutationFn: (call: { method: string; path: string; body?: unknown }) =>
+    mutationFn: (call: { method: string; path: string; body?: unknown; done?: string }) =>
       api<StatusOption[]>(call.method, call.path, call.body),
-    onSuccess: async (fresh) => {
+    onError: (e: Error) => toast.error(e.message),
+    onSuccess: async (fresh, call) => {
       queryClient.setQueryData(["statuses"], fresh);
+      toast.success(call.done ?? "Status saved");
       setDeleting(null);
       setReplaceWith("");
       // Renames and replacements change the records themselves.
@@ -94,12 +97,22 @@ export function StatusSettings({ canEdit }: { canEdit: boolean }) {
   const move = (index: number, by: -1 | 1) => {
     const ids = options.map((o) => o.id);
     [ids[index], ids[index + by]] = [ids[index + by], ids[index]];
-    change.mutate({ method: "PUT", path: "/api/statuses/order", body: { object, ids } });
+    change.mutate({
+      method: "PUT",
+      path: "/api/statuses/order",
+      body: { object, ids },
+      done: "Order saved",
+    });
   };
   const add = () => {
     if (newName.trim() === "") return;
     change.mutate(
-      { method: "POST", path: "/api/statuses", body: { object, name: newName } },
+      {
+        method: "POST",
+        path: "/api/statuses",
+        body: { object, name: newName },
+        done: `${newName.trim()} added`,
+      },
       { onSuccess: () => setNewName("") },
     );
   };
@@ -289,6 +302,9 @@ export function StatusSettings({ canEdit }: { canEdit: boolean }) {
                       change.mutate({
                         method: "DELETE",
                         path: `/api/statuses/${option.id}${replaceWith ? `?replaceWith=${replaceWith}` : ""}`,
+                        done: replaceWith
+                          ? `${option.name} deleted. Its records are now ${replaceWith}.`
+                          : `${option.name} deleted`,
                       })
                     }
                   >
@@ -326,11 +342,6 @@ export function StatusSettings({ canEdit }: { canEdit: boolean }) {
           </form>
         )}
 
-        {change.error && (
-          <p role="alert" className="text-sm text-destructive">
-            {change.error.message}
-          </p>
-        )}
         {(object === "leads" || object === "contacts") && (
           <p className="text-xs text-muted-foreground">
             “Ends their sequence” stops a person's sequence when they are given that status. “Do
