@@ -28,6 +28,7 @@ import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
 import * as activityService from "../activities/service";
 import * as dashboard from "../dashboard/service";
+import * as fields from "../fields/service";
 import * as settings from "../settings/service";
 import * as statuses from "../statuses/service";
 
@@ -192,6 +193,23 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.put("/users/:id/role", async (req, res) => {
     await settings.changeUserRole(db, actorOf(req), id(req), req.body, options.onRoleChange);
     res.status(204).end();
+  });
+
+  // ---- custom fields and record layouts (read by everyone, changed in Admin)
+  api.get("/fields", async (req, res) => {
+    res.json(await fields.fieldSetup(db, actorOf(req)));
+  });
+  api.post("/fields", async (req, res) => {
+    res.status(201).json(await fields.createField(db, actorOf(req), req.body));
+  });
+  api.put("/fields/layout", async (req, res) => {
+    res.json(await fields.saveLayout(db, actorOf(req), req.body));
+  });
+  api.get("/fields/:id/usage", async (req, res) => {
+    res.json(await fields.fieldUsage(db, actorOf(req), id(req)));
+  });
+  api.patch("/fields/:id", async (req, res) => {
+    res.json(await fields.updateField(db, actorOf(req), id(req), req.body));
   });
 
   // ---- status lists (read by everyone, changed in Admin)

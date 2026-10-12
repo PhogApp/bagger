@@ -1227,6 +1227,205 @@ describe("activities and the dashboard", () => {
   });
 });
 
+describe("custom fields and record layouts", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  type Setup = {
+    fields: { id: string; object: string; key: string; label: string; options: string[]; archived: boolean }[];
+    layouts: Record<string, { field: string; width: string; hidden?: boolean }[]>;
+  };
+  const setup = async (): Promise<Setup> => (await as(boss).get("/api/fields")).body;
+  const field = async (object: string, label: string) =>
+    (await setup()).fields.find((f) => f.object === object && f.label === label)!;
+  const add = (body: object) => as(boss).post("/api/fields", body);
+  const lead = (email: string, custom?: object) => ({
+    firstName: "Cy",
+    lastName: "Custom",
+    email,
+    ...(custom ? { custom } : {}),
+  });
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { waitDayMode: "calendar" });
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+  });
+
+  it("lets only an admin add fields, with a key made from the label", async () => {
+    expect((await add({ object: "leads", label: "Current ERP", type: "picklist", options: ["QuickBooks", "Sage", "Xero"] })).status).toBe(201);
+    await add({ object: "leads", label: "Locations", type: "number" });
+    await add({ object: "leads", label: "Budget", type: "currency" });
+    await add({ object: "leads", label: "Decision maker?", type: "checkbox" });
+    await add({ object: "leads", label: "Modules", type: "multipicklist", options: ["GL", "AP", "AR"] });
+    await add({ object: "leads", label: "Renewal date", type: "date" });
+    await add({ object: "leads", label: "Industry", type: "text", required: true });
+    await add({ object: "leads", label: "Referred by", type: "user" });
+    const keys = (await setup()).fields.map((f) => f.key);
+    expect(keys).toEqual([
+      "currentErp", "locations", "budget", "decisionMaker", "modules", "renewalDate", "industry", "referredBy",
+    ]);
+    expect((await as(seller).post("/api/fields", { object: "leads", label: "X", type: "text" })).status).toBe(403);
+    expect((await as(seller).get("/api/fields")).status).toBe(200);
+    expect((await add({ object: "leads", label: "industry", type: "text" })).status).toBe(400);
+    expect((await add({ object: "leads", label: "Tier", type: "picklist" })).status).toBe(400);
+    // A label matching a Bagger field still gets its own key.
+    await add({ object: "accounts", label: "Website", type: "url" });
+    expect((await field("accounts", "Website")).key).toBe("website2");
+  });
+
+  it("checks, tidies and records custom values on leads", async () => {
+    const res = await as(seller).post(
+      "/api/leads",
+      lead("cy@custom.example", {
+        currentErp: "quickbooks",
+        locations: "1,200",
+        budget: "$45,000.50",
+        decisionMaker: "yes",
+        modules: "AR; gl",
+        renewalDate: "2027-03-31",
+        industry: "Logistics",
+        referredBy: boss.userId,
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.custom).toEqual({
+      currentErp: "QuickBooks",
+      locations: 1200,
+      budget: 45000.5,
+      decisionMaker: true,
+      modules: ["GL", "AR"],
+      renewalDate: "2027-03-31",
+      industry: "Logistics",
+      referredBy: boss.userId,
+    });
+
+    const bad = async (custom: object) =>
+      (await as(seller).post("/api/leads", lead(`bad${Math.random()}@custom.example`, { industry: "x", ...custom })));
+    expect((await as(seller).post("/api/leads", lead("noind@custom.example"))).body.message).toMatch(/Industry is required/);
+    expect((await bad({ currentErp: "SAP" })).body.message).toMatch(/not one of the choices/);
+    expect((await bad({ locations: "many" })).status).toBe(400);
+    expect((await bad({ renewalDate: "03/31/2027" })).status).toBe(400);
+    expect((await bad({ nope: "x" })).status).toBe(400);
+    expect((await bad({ referredBy: outsider.userId })).status).toBe(400);
+
+    // Editing one field leaves the others; clearing a required one is refused.
+    const id = res.body.id;
+    const edited = await as(seller).patch(`/api/leads/${id}`, { custom: { locations: 14, budget: "" } });
+    expect(edited.body.custom).toMatchObject({ locations: 14, currentErp: "QuickBooks" });
+    expect(edited.body.custom.budget).toBeUndefined();
+    expect((await as(seller).patch(`/api/leads/${id}`, { custom: { industry: "" } })).status).toBe(400);
+    const history = (await as(seller).get(`/api/history/lead/${id}`)).body;
+    expect(history.filter((h: { field: string }) => h.field?.startsWith("custom."))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "custom.locations", oldValue: "1200", newValue: "14" }),
+        expect.objectContaining({ field: "custom.budget", oldValue: "45000.5", newValue: null }),
+      ]),
+    );
+    // A lead made before Industry was required can still be edited elsewhere.
+    await db.update(s.leads).set({ custom: {} }).where(eq(s.leads.id, id));
+    expect((await as(seller).patch(`/api/leads/${id}`, { title: "Buyer" })).status).toBe(200);
+  });
+
+  it("renames picklist choices on records, and asks where removed ones go", async () => {
+    const erp = await field("leads", "Current ERP");
+    const a = (await as(seller).post("/api/leads", lead("a@pick.example", { industry: "x", currentErp: "Sage", modules: ["GL", "AP"] }))).body;
+    const b = (await as(seller).post("/api/leads", lead("b@pick.example", { industry: "x", currentErp: "Xero" }))).body;
+
+    const renamed = await as(boss).patch(`/api/fields/${erp.id}`, {
+      options: ["QuickBooks", "Sage Intacct", "Xero"],
+      renamed: { Sage: "Sage Intacct" },
+    });
+    expect(renamed.status).toBe(200);
+    expect((await as(seller).get(`/api/leads/${a.id}`)).body.custom.currentErp).toBe("Sage Intacct");
+
+    const usage = (await as(boss).get(`/api/fields/${erp.id}/usage`)).body;
+    expect(usage.byOption).toMatchObject({ Xero: 1, "Sage Intacct": 1 });
+    expect((await as(boss).patch(`/api/fields/${erp.id}`, { options: ["QuickBooks", "Sage Intacct"] })).status).toBe(400);
+    await as(boss).patch(`/api/fields/${erp.id}`, {
+      options: ["QuickBooks", "Sage Intacct"],
+      replace: { Xero: "QuickBooks" },
+    });
+    expect((await as(seller).get(`/api/leads/${b.id}`)).body.custom.currentErp).toBe("QuickBooks");
+    const history = (await as(seller).get(`/api/history/lead/${b.id}`)).body;
+    expect(history[0]).toMatchObject({ field: "custom.currentErp", oldValue: "Xero", newValue: "QuickBooks", source: "system" });
+
+    const modules = await field("leads", "Modules");
+    await as(boss).patch(`/api/fields/${modules.id}`, { options: ["GL", "AR"], replace: { AP: null } });
+    expect((await as(seller).get(`/api/leads/${a.id}`)).body.custom.modules).toEqual(["GL"]);
+  });
+
+  it("archives a field without losing its values", async () => {
+    const locations = await field("leads", "Locations");
+    const kept = (await as(seller).post("/api/leads", lead("arch@custom.example", { industry: "x", locations: 3 }))).body;
+    await as(boss).patch(`/api/fields/${locations.id}`, { archived: true });
+    expect((await as(seller).patch(`/api/leads/${kept.id}`, { custom: { locations: 4 } })).status).toBe(400);
+    expect((await as(seller).get(`/api/leads/${kept.id}`)).body.custom.locations).toBe(3);
+    await as(boss).patch(`/api/fields/${locations.id}`, { archived: false });
+    expect((await as(seller).patch(`/api/leads/${kept.id}`, { custom: { locations: 4 } })).status).toBe(200);
+  });
+
+  it("saves the record page layout, keeping Bagger's essential fields visible", async () => {
+    const entries = [
+      { field: "firstName", width: "half" },
+      { field: "lastName", width: "half" },
+      { field: "custom.currentErp", width: "full" },
+      { field: "directPhone", width: "third", hidden: true },
+    ];
+    const saved = await as(boss).put("/api/fields/layout", { object: "leads", entries });
+    expect(saved.status).toBe(200);
+    expect(saved.body.layouts.leads).toEqual(entries);
+    const hideEmail = [{ field: "email", width: "half", hidden: true }];
+    expect((await as(boss).put("/api/fields/layout", { object: "leads", entries: hideEmail })).status).toBe(400);
+    expect((await as(boss).put("/api/fields/layout", { object: "leads", entries: [{ field: "custom.nope", width: "half" }] })).status).toBe(400);
+    expect((await as(seller).put("/api/fields/layout", { object: "leads", entries })).status).toBe(403);
+  });
+
+  it("imports custom columns, and lists rows missing a required value", async () => {
+    const rows = [
+      { firstName: "Ia", lastName: "One", email: "ia@import-custom.example", "custom.industry": "Retail", "custom.referredBy": "SAL SELLER", "custom.decisionMaker": "x" },
+      { firstName: "Ib", lastName: "Two", email: "ib@import-custom.example" },
+      { firstName: "Ic", lastName: "Three", email: "ic@import-custom.example", "custom.renewalDate": "soon" },
+    ];
+    const res = await as(seller).post("/api/import/leads", { rows });
+    expect(res.body).toMatchObject({
+      created: 2,
+      incomplete: [{ row: 2, label: "ib@import-custom.example", missing: ["Industry"] }],
+      errors: [{ row: 3 }],
+    });
+    const ia = (await as(seller).get("/api/leads?q=ia@import-custom")).body[0];
+    expect(ia.custom).toEqual({ industry: "Retail", referredBy: seller.userId, decisionMaker: true });
+
+    const again = await as(seller).post("/api/import/leads", {
+      rows: [{ firstName: "Ia", lastName: "One", email: "ia@import-custom.example", "custom.industry": "Grocery" }],
+      mode: "update",
+    });
+    expect(again.body).toMatchObject({ updated: 1 });
+    const after = (await as(seller).get(`/api/leads/${ia.id}`)).body;
+    expect(after.custom).toEqual({ industry: "Grocery", referredBy: seller.userId, decisionMaker: true });
+  });
+
+  it("carries matching fields through conversion and fills custom merge fields", async () => {
+    await add({ object: "contacts", label: "Industry", type: "text" });
+    await add({ object: "contacts", label: "Locations", type: "text" }); // a different type: not carried
+    await add({ object: "accounts", label: "Tier", type: "picklist", options: ["Gold", "Silver"] });
+    const account = (await as(seller).post("/api/accounts", { name: "Merge Co", custom: { tier: "Gold" } })).body;
+    const l = (await as(seller).post("/api/leads", lead("merge@custom.example", { industry: "Hospitality", locations: 9 }))).body;
+    const converted = (await as(seller).post(`/api/leads/${l.id}/convert`, { accountId: account.id })).body;
+    const contact = (await as(seller).get(`/api/contacts/${converted.contactId}`)).body;
+    expect(contact.custom).toEqual({ industry: "Hospitality" });
+
+    const sequence = (await as(seller).post("/api/sequences", { name: "Merge" })).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, {
+      type: "email",
+      title: "Hi",
+      subject: "{firstName} in {custom.industry}",
+      body: "As a {account.tier} customer… {custom.missing}{account.nothing}",
+    });
+    const enrolled = (await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { contactId: contact.id })).body;
+    const task = (await as(seller).get(`/api/tasks/${enrolled.task.id}`)).body;
+    expect(task.content).toMatchObject({ subject: "Cy in Hospitality", body: "As a Gold customer… " });
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;

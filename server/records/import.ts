@@ -13,6 +13,8 @@ import {
 import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
 import { AccountIndex, domainOf, nameKey } from "./duplicates";
+import { coerce, loadDefs, showValue } from "../fields/service";
+import { listUsers } from "../settings/service";
 import { defaultStatus } from "../statuses/service";
 import { accountInput, contactInput, leadInput, optionalUrl } from "./index";
 
@@ -74,6 +76,8 @@ export interface ImportResult {
   errors: { row: number; message: string }[];
   /** Contacts only: accounts created (or that would be) for new contacts. */
   newAccounts: number;
+  /** Rows imported without a value for a required custom field. Not an error; listed to fill in. */
+  incomplete: { row: number; label: string; missing: string[] }[];
 }
 
 const leadRow = leadInput.omit({ status: true, ownerId: true });
@@ -131,6 +135,17 @@ export async function importRecords(
     repeats: [],
     errors: [],
     newAccounts: 0,
+    incomplete: [],
+  };
+
+  // Custom fields arrive as "custom.<key>" columns. A user field can be given
+  // by email address or name, as people write them in spreadsheets.
+  const defs = await loadDefs(db, actor.orgId, kind);
+  const defsByKey = new Map(defs.map((d) => [d.key, d]));
+  const people = defs.some((d) => d.type === "user") ? await listUsers(db, actor) : [];
+  const findUser = (text: string) => {
+    const wanted = text.trim().toLowerCase();
+    return people.find((u) => u.email.toLowerCase() === wanted || u.name.toLowerCase() === wanted)?.id;
   };
 
   // ---- 1. validate each row, and drop rows that repeat an earlier one
@@ -141,9 +156,30 @@ export async function importRecords(
     // Blank cells mean "not provided".
     const cleaned = Object.fromEntries(
       Object.entries(source).filter(
-        ([, value]) => !(typeof value === "string" && value.trim() === ""),
+        ([key, value]) =>
+          key !== "custom" && !(typeof value === "string" && value.trim() === ""),
       ),
     );
+    const custom: Values = {};
+    for (const key of Object.keys(cleaned)) {
+      if (!key.startsWith("custom.")) continue;
+      const value = cleaned[key];
+      delete cleaned[key];
+      const def = defsByKey.get(key.slice("custom.".length));
+      if (!def) {
+        result.errors.push({ row, message: `There is no field called "${key.slice(7)}"` });
+        return;
+      }
+      try {
+        const given =
+          def.type === "user" && typeof value === "string" ? (findUser(value) ?? value) : value;
+        const stored = coerce(def, given);
+        if (stored !== null) custom[def.key] = stored;
+      } catch (e) {
+        result.errors.push({ row, message: e instanceof Error ? e.message : String(e) });
+        return;
+      }
+    }
     const parsed = schema.safeParse(cleaned);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -161,6 +197,7 @@ export async function importRecords(
     const values = Object.fromEntries(
       Object.entries(parsed.data as Values).filter(([, v]) => v !== null && v !== undefined),
     );
+    if (Object.keys(custom).length > 0) values.custom = custom;
     let label: string;
     let keys: string[];
     if (kind === "accounts") {
@@ -177,6 +214,10 @@ export async function importRecords(
     }
     for (const k of keys) seen.add(k);
     valid.push({ row, values, label });
+    const missing = defs.filter((d) => d.required && custom[d.key] === undefined);
+    if (missing.length > 0) {
+      result.incomplete.push({ row, label, missing: missing.map((d) => d.label) });
+    }
   });
 
   if (valid.length === 0) return result;
@@ -325,8 +366,17 @@ export async function importRecords(
         continue;
       }
       // A contact stays on its account; the file's account columns only place new contacts.
-      const { accountName: _n, accountWebsite: _w, ...patch } = item.values;
+      const { accountName: _n, accountWebsite: _w, custom: given, ...patch } = item.values;
       const changes = diffFields(before as Values, patch);
+      // Custom values from the file are added to what the record already has.
+      if (given) {
+        const had = (before as { custom: Values }).custom;
+        for (const [key, value] of Object.entries(given as Values)) {
+          if (showValue(had[key]) === showValue(value)) continue;
+          changes.push({ field: `custom.${key}`, oldValue: showValue(had[key]), newValue: showValue(value) });
+        }
+        (patch as Values).custom = { ...had, ...(given as Values) };
+      }
       if (changes.length === 0) continue;
       await tx
         .update(table)
@@ -339,5 +389,11 @@ export async function importRecords(
   });
 
   result.errors.sort((a, b) => a.row - b.row);
+  // Only rows that became (or would become) records can be incomplete.
+  const leftOut = new Set([
+    ...result.errors.map((e) => e.row),
+    ...result.duplicates.filter((d) => mode !== "update" || d.existing).map((d) => d.row),
+  ]);
+  result.incomplete = result.incomplete.filter((r) => !leftOut.has(r.row));
   return result;
 }

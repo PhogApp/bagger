@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/table";
 import { LogOut, UserPlus } from "lucide-react";
 import { Avatar } from "@/components/AppLayout";
+import { FieldSettings } from "@/components/FieldSettings";
 import { StatusSettings } from "@/components/StatusSettings";
 import { canUse, isAdmin, useApi, useMe, type OrgUser } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -436,6 +437,7 @@ export function AdminPage() {
       <div className="max-w-4xl space-y-6 p-6">
         <OrganizationSection canEdit={canUse(me, "setup.org_settings")} />
         <StatusSettings canEdit={canUse(me, "setup.org_settings")} />
+        {canUse(me, "setup.org_settings") && <FieldSettings />}
         <UsersSection canManage={canUse(me, "account.users_and_roles")} />
       </div>
     </div>

@@ -3,6 +3,7 @@ import { BulkEnrollButton } from "@/components/BulkEnroll";
 import { ConvertLeadButton } from "@/components/ConvertLead";
 import { ImportButton } from "@/components/ImportRecords";
 import { RecordDetail } from "@/components/RecordDetail";
+import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useMe, useOrgUsers, useStatuses } from "@/lib/api";
@@ -35,7 +36,7 @@ interface Lead {
 function useLeadFields(): Field[] {
   const { data: users } = useOrgUsers();
   const { data: statuses } = useStatuses();
-  return [
+  return useLayout("leads", [
     { name: "firstName", label: "First Name", required: true, span: 2 },
     { name: "lastName", label: "Last Name", required: true, span: 2 },
     { name: "title", label: "Title", span: 2 },
@@ -54,7 +55,7 @@ function useLeadFields(): Field[] {
     statusField(statuses, "leads"),
     ownerField(users),
     { name: "notes", label: "Notes", kind: "textarea", span: 6 },
-  ];
+  ]);
 }
 
 export function LeadsPage() {

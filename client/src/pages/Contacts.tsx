@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
 import { ImportButton } from "@/components/ImportRecords";
 import { RecordDetail } from "@/components/RecordDetail";
+import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useApi, useMe, useOrgUsers, useStatuses } from "@/lib/api";
@@ -47,7 +48,7 @@ function useContactFields(): Field[] {
   const { data: users } = useOrgUsers();
   const { data: statuses } = useStatuses();
   const { accounts } = useAccountPicker();
-  return [
+  return useLayout("contacts", [
     { name: "firstName", label: "First Name", required: true, span: 2 },
     { name: "lastName", label: "Last Name", required: true, span: 2 },
     { name: "title", label: "Title", span: 2 },
@@ -72,7 +73,7 @@ function useContactFields(): Field[] {
     statusField(statuses, "contacts"),
     ownerField(users),
     { name: "notes", label: "Notes", kind: "textarea", span: 6 },
-  ];
+  ]);
 }
 
 export function ContactsPage() {

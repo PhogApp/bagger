@@ -710,6 +710,7 @@ async function loadTaskViews(
       lead: leads,
       contact: contacts,
       accountName: accounts.name,
+      accountCustom: accounts.custom,
     })
     .from(stepTasks)
     .innerJoin(enrollments, eq(stepTasks.enrollmentId, enrollments.id))
@@ -734,6 +735,8 @@ async function loadTaskViews(
       email: source.email,
       title: source.title,
       company: r.lead ? r.lead.company : r.accountName,
+      custom: source.custom,
+      accountCustom: r.accountCustom ?? undefined,
     };
     return {
       taskId: r.task.id,

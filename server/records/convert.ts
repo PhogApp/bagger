@@ -7,6 +7,7 @@ import { canCreate, PermissionError, requireRecord } from "../auth/permissions";
 import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
 import { moveEnrollmentsToContact } from "../sequences/engine";
+import { loadDefs } from "../fields/service";
 import { defaultStatus, listStatusNames } from "../statuses/service";
 import { AccountIndex, personMatches } from "./duplicates";
 import { optionalUrl } from "./index";
@@ -116,6 +117,18 @@ export async function convertLead(
       );
     }
 
+    // Custom fields carry over to a contact (or new account) field with the
+    // same key and type; anything without a match stays on the lead's history.
+    const carry = async (object: "contacts" | "accounts") => {
+      const leadDefs = new Map((await loadDefs(tx, actor.orgId, "leads")).map((d) => [d.key, d.type]));
+      const out: Record<string, unknown> = {};
+      for (const d of await loadDefs(tx, actor.orgId, object)) {
+        const value = (lead.custom as Record<string, unknown>)[d.key];
+        if (value !== undefined && leadDefs.get(d.key) === d.type) out[d.key] = value;
+      }
+      return out;
+    };
+
     let accountId: string;
     if (input.accountId) {
       const [account] = await tx
@@ -147,6 +160,7 @@ export async function convertLead(
           name,
           website: website ?? null,
           status: await defaultStatus(tx, actor.orgId, "accounts"),
+          custom: await carry("accounts"),
         })
         .returning({ id: accounts.id });
       await recordLifecycle(tx, actor, "account", created.id, "create");
@@ -177,6 +191,7 @@ export async function convertLead(
         linkedin: lead.linkedin,
         notes: lead.notes,
         status,
+        custom: await carry("contacts"),
       })
       .returning({ id: contacts.id });
     await recordLifecycle(tx, actor, "contact", contact.id, "create");

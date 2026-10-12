@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApi } from "@/lib/api";
+import { useFieldSetup, type CustomField, type CustomFieldType } from "@/lib/fields";
 
 export type ImportKind = "leads" | "contacts" | "accounts";
 
@@ -195,6 +196,8 @@ interface Result {
   repeats: RowNote[];
   errors: { row: number; message: string }[];
   newAccounts: number;
+  /** Imported, but missing a value for a required custom field. */
+  incomplete: { row: number; label: string; missing: string[] }[];
 }
 type Mode = "check" | "skip" | "update";
 
@@ -206,8 +209,7 @@ const count = (n: number, one: string, many = `${one}s`) =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
 /** A file with the column names Bagger recognizes and one example row. */
-function downloadSample(kind: ImportKind) {
-  const targets = KINDS[kind].targets;
+function downloadSample(kind: ImportKind, targets: Target[]) {
   const csv = Papa.unparse([targets.map((t) => t.label), targets.map((t) => t.example)]);
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
@@ -230,8 +232,42 @@ export function ImportButton({ kind }: { kind: ImportKind }) {
   );
 }
 
+/** An example value for a custom field in the sample file. */
+const EXAMPLE: Record<CustomFieldType, (f: CustomField) => string> = {
+  text: () => "",
+  longtext: () => "",
+  number: () => "12",
+  currency: () => "12500",
+  date: () => "2026-12-31",
+  checkbox: () => "yes",
+  picklist: (f) => f.options[0] ?? "",
+  multipicklist: (f) => f.options.slice(0, 2).join("; "),
+  url: () => "www.example.com",
+  email: () => "someone@example.com",
+  phone: () => "(555) 010-0199",
+  user: () => "name@yourcompany.com",
+};
+
 function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void }) {
-  const cfg = KINDS[kind];
+  const base = KINDS[kind];
+  const { data: setup } = useFieldSetup();
+  // The organization's own fields can be imported too, as "custom.<key>".
+  const cfg = {
+    ...base,
+    targets: [
+      ...base.targets,
+      ...(setup?.fields ?? [])
+        .filter((f) => f.object === kind && !f.archived)
+        .map(
+          (f): Target => ({
+            name: `custom.${f.key}`,
+            label: f.label,
+            guesses: [normalize(f.key)],
+            example: EXAMPLE[f.type](f),
+          }),
+        ),
+    ],
+  };
   const api = useApi();
   const queryClient = useQueryClient();
   const [parsed, setParsed] = useState<Parsed | null>(null);
@@ -297,6 +333,7 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
       repeats: [],
       errors: [],
       newAccounts: 0,
+      incomplete: [],
     };
     for (let start = 0; start < rows.length; start += BATCH) {
       const part = await api<Result>("POST", `/api/import/${kind}`, {
@@ -312,6 +349,7 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
       total.duplicates.push(...shift(part.duplicates));
       total.repeats.push(...shift(part.repeats));
       total.errors.push(...shift(part.errors));
+      total.incomplete.push(...shift(part.incomplete));
     }
     return total;
   }
@@ -333,6 +371,14 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
 
   const problems = (r: Result) => (
     <>
+      {r.incomplete.length > 0 && (
+        <NoteList
+          title={`${count(r.incomplete.length, "row")} ${
+            r.incomplete.length === 1 ? "is" : "are"
+          } missing a required field (imported anyway, fill ${r.incomplete.length === 1 ? "it" : "them"} in later):`}
+          items={r.incomplete.map((n) => `Line ${line(n.row)}: ${n.label} (${n.missing.join(", ")})`)}
+        />
+      )}
       {r.repeats.length > 0 && (
         <NoteList
           title={`${count(r.repeats.length, "row")} left out because ${
@@ -503,7 +549,7 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
           <button
             type="button"
             className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
-            onClick={() => downloadSample(kind)}
+            onClick={() => downloadSample(kind, cfg.targets)}
           >
             <Download className="h-3.5 w-3.5" aria-hidden />
             Download a sample file

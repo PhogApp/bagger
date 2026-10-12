@@ -40,7 +40,16 @@ export interface Option {
 export interface Field {
   name: string;
   label: string;
-  kind?: "text" | "email" | "tel" | "url" | "date" | "textarea" | "select";
+  kind?:
+    | "text"
+    | "number"
+    | "email"
+    | "tel"
+    | "url"
+    | "date"
+    | "textarea"
+    | "select"
+    | "multiselect";
   required?: boolean;
   options?: Option[];
   placeholder?: string;
@@ -52,6 +61,69 @@ export interface Field {
   help?: string;
   /** Converts the form's text value before sending, e.g. "true" to true. */
   parse?: (value: string) => unknown;
+  /** How a stored value reads on the record page, when plain text won't do. */
+  format?: (value: unknown) => ReactNode;
+}
+
+/** A record's value for a field, including custom ones named "custom.<key>". */
+export function valueOf(row: Record<string, unknown>, name: string): unknown {
+  if (!name.startsWith("custom.")) return row[name];
+  return (row.custom as Record<string, unknown> | undefined)?.[name.slice(7)];
+}
+
+/** A stored value as the text a form box holds. Lists become "a; b". */
+export function asText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.join("; ");
+  return String(value);
+}
+
+/** Turn form values into a request body, gathering "custom.<key>" values under `custom`. */
+export function toBody(values: Record<string, unknown>): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const custom: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(values)) {
+    if (name.startsWith("custom.")) custom[name.slice(7)] = value;
+    else body[name] = value;
+  }
+  if (Object.keys(custom).length > 0) body.custom = custom;
+  return body;
+}
+
+/** Ticks for each choice; the value is the choices joined with "; ". */
+export function MultiSelect(props: {
+  id: string;
+  options: Option[];
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const chosen = new Set(
+    props.value
+      .split(";")
+      .map((v) => v.trim())
+      .filter(Boolean),
+  );
+  return (
+    <div id={props.id} className="flex flex-wrap gap-x-4 gap-y-1.5 py-1.5" role="group">
+      {props.options.map((o) => (
+        <label key={o.value} className="flex items-center gap-1.5 text-sm">
+          <input
+            type="checkbox"
+            disabled={props.disabled}
+            checked={chosen.has(o.value)}
+            onChange={(e) => {
+              const next = new Set(chosen);
+              if (e.target.checked) next.add(o.value);
+              else next.delete(o.value);
+              props.onChange(props.options.filter((x) => next.has(x.value)).map((x) => x.value).join("; "));
+            }}
+          />
+          {o.label}
+        </label>
+      ))}
+    </div>
+  );
 }
 
 export interface Column<T> {
@@ -155,7 +227,15 @@ function FieldInput({
         {field.label}
         {field.required && <span className="text-destructive"> *</span>}
       </Label>
-      {field.kind === "textarea" ? (
+      {field.kind === "multiselect" ? (
+        <MultiSelect
+          id={id}
+          options={field.options ?? []}
+          value={value}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      ) : field.kind === "textarea" ? (
         <Textarea
           id={id}
           value={value}
@@ -184,8 +264,8 @@ function FieldInput({
           id={id}
           // Web addresses use a plain text box: the browser's own "url" check
           // rejects "www.example.com", which is how most people type one.
-          type={field.kind === "url" ? "text" : (field.kind ?? "text")}
-          inputMode={field.kind === "url" ? "url" : undefined}
+          type={field.kind === "url" || field.kind === "number" ? "text" : (field.kind ?? "text")}
+          inputMode={field.kind === "url" ? "url" : field.kind === "number" ? "decimal" : undefined}
           autoCapitalize={field.kind === "url" ? "none" : undefined}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -300,7 +380,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   function open(target: T | "new") {
     const row = target === "new" ? null : (target as unknown as Record<string, unknown>);
     setValues(
-      row ? Object.fromEntries(fields.map((f) => [f.name, String(row[f.name] ?? "")])) : blank,
+      row ? Object.fromEntries(fields.map((f) => [f.name, asText(valueOf(row, f.name))])) : blank,
     );
     setFormError(null);
     setDuplicates(null);
@@ -381,14 +461,18 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       if (editing === "new") {
         // Leave out blanks so the server applies its defaults.
         const body = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== ""));
-        return api("POST", `/api/${object}${allowDuplicate ? "?allowDuplicate=1" : ""}`, parsed(body));
+        return api(
+          "POST",
+          `/api/${object}${allowDuplicate ? "?allowDuplicate=1" : ""}`,
+          toBody(parsed(body)),
+        );
       }
       const row = editing as unknown as Record<string, unknown>;
       const changed = Object.fromEntries(
-        Object.entries(values).filter(([name, v]) => v !== String(row[name] ?? "")),
+        Object.entries(values).filter(([name, v]) => v !== asText(valueOf(row, name))),
       );
       if (Object.keys(changed).length === 0) return null;
-      return api("PATCH", `/api/${object}/${(editing as T).id}`, parsed(changed));
+      return api("PATCH", `/api/${object}/${(editing as T).id}`, toBody(parsed(changed)));
     },
     onSuccess: async (created) => {
       await done();

@@ -1,7 +1,13 @@
 import { and, asc, eq, ilike, isNull, or, type SQL } from "drizzle-orm";
 import type { AnyPgColumn, PgTableWithColumns } from "drizzle-orm/pg-core";
 import type { z } from "zod";
-import { diffFields, recordLifecycle, recordUpdate, type HistorySource } from "../audit/history";
+import {
+  diffFields,
+  recordLifecycle,
+  recordUpdate,
+  type FieldChange,
+  type HistorySource,
+} from "../audit/history";
 import { isMember, type Actor } from "../auth/actor";
 import {
   canCreate,
@@ -11,7 +17,8 @@ import {
   type ObjectName,
 } from "../auth/permissions";
 import type { Db } from "../db/types";
-import type { StatusObject } from "../../shared/schema";
+import type { CustomFieldObject, StatusObject } from "../../shared/schema";
+import { settleCustom } from "../fields/service";
 import { defaultStatus, resolveStatus } from "../statuses/service";
 import { DuplicateError, NotFoundError, ValidationError, type DuplicateMatch } from "../errors";
 
@@ -46,6 +53,8 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   orderBy: AnyPgColumn[];
   /** Check references (for example, that an account is in this org). */
   validate?: (tx: Db, actor: Actor, values: Partial<z.infer<TSchema>>) => Promise<void>;
+  /** Set when the record type can have custom fields. */
+  customObject?: CustomFieldObject;
   /** Set when the record has a status drawn from the organization's own list. */
   statusObject?: StatusObject;
   /** Records that look like the one about to be created. Any match stops the create. */
@@ -77,7 +86,11 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
   cfg: RecordConfig<TRow, TSchema>,
 ) {
   const t = cfg.table;
-  type Input = z.infer<TSchema> & { ownerId?: string; status?: string };
+  type Input = z.infer<TSchema> & {
+    ownerId?: string;
+    status?: string;
+    custom?: Record<string, unknown>;
+  };
 
   /** Check a chosen status against the organization's list; fill in the default on create. */
   async function settleStatus(tx: Db, actor: Actor, input: Partial<Input>, creating: boolean) {
@@ -155,6 +168,12 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         await checkOwner(tx, actor, values.ownerId);
         await cfg.validate?.(tx, actor, values);
         await settleStatus(tx, actor, values, true);
+        if (cfg.customObject) {
+          const { custom } = await settleCustom(tx, actor, cfg.customObject, values.custom, {
+            requireAll: true,
+          });
+          (values as { custom?: unknown }).custom = custom;
+        }
         if (cfg.duplicates && !options.allowDuplicate) {
           const matches = await cfg.duplicates(tx, actor, values);
           if (matches.length > 0) throw new DuplicateError(matches);
@@ -183,7 +202,23 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         if (frozen) throw new ValidationError(frozen);
 
         await settleStatus(tx, actor, patch, false);
-        const changes = diffFields(before as unknown as Record<string, unknown>, patch);
+        // Custom values merge into what the record has, and get a history line each.
+        let customChanges: FieldChange[] = [];
+        if (patch.custom !== undefined) {
+          if (!cfg.customObject) throw new ValidationError("This record has no custom fields");
+          const settled = await settleCustom(tx, actor, cfg.customObject, patch.custom, {
+            before: (before as unknown as { custom: Record<string, unknown> }).custom,
+            requireChanged: true,
+          });
+          customChanges = settled.changes;
+          delete patch.custom;
+          if (customChanges.length > 0) (patch as { custom?: unknown }).custom = settled.custom;
+        }
+        const { custom: _merged, ...plain } = patch;
+        const changes = [
+          ...diffFields(before as unknown as Record<string, unknown>, plain),
+          ...customChanges,
+        ];
         if (changes.length === 0) return before;
         await checkOwner(tx, actor, patch.ownerId);
         await cfg.validate?.(tx, actor, patch);
