@@ -23,6 +23,7 @@ import {
 } from "../records";
 import { conversionPreview, convertLead } from "../records/convert";
 import { IMPORT_KINDS, importRecords } from "../records/import";
+import type { ListOptions } from "../records/service";
 import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
@@ -55,6 +56,14 @@ const listQuery = z.object({
   opportunityId: z.uuid().optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  sort: z.string().max(80).optional(),
+  dir: z.enum(["asc", "desc"]).optional(),
+  /** Owner ids, comma separated; "me" for whoever is asking. */
+  owner: z.string().optional(),
+  /** Repeat for several: ?status=New&status=Prospecting */
+  status: z.union([z.string(), z.array(z.string())]).optional(),
+  /** Answer { rows, total } instead of just the rows. */
+  withTotal: z.literal("1").optional(),
 });
 
 function actorOf(req: Request): Actor {
@@ -71,11 +80,9 @@ function id(req: Request, name = "id"): string {
 type Handler = (req: Request, res: Response) => Promise<void>;
 
 interface CrudService {
-  list(
-    db: Db,
-    actor: Actor,
-    options: { q?: string; limit?: number; offset?: number; where?: Record<string, string | undefined> },
-  ): Promise<unknown[]>;
+  list(db: Db, actor: Actor, options: ListOptions): Promise<unknown[]>;
+  count(db: Db, actor: Actor, options: ListOptions): Promise<number>;
+  bulk(db: Db, actor: Actor, raw: unknown): Promise<unknown>;
   get(db: Db, actor: Actor, id: string): Promise<unknown>;
   create(
     db: Db,
@@ -89,9 +96,20 @@ interface CrudService {
 
 function crud(router: Router, path: string, db: Db, service: CrudService) {
   router.get(path, (async (req, res) => {
-    const { accountId, leadId, contactId, opportunityId, ...options } = listQuery.parse(req.query);
-    const where = { accountId, leadId, contactId, opportunityId };
-    res.json(await service.list(db, actorOf(req), { ...options, where }));
+    const actor = actorOf(req);
+    const { accountId, leadId, contactId, opportunityId, owner, status, withTotal, ...options } =
+      listQuery.parse(req.query);
+    const owners = owner
+      ?.split(",")
+      .filter(Boolean)
+      .map((o) => (o === "me" ? actor.userId : z.uuid().parse(o)));
+    const statuses = status === undefined ? undefined : [status].flat();
+    const full = { ...options, owners, statuses, where: { accountId, leadId, contactId, opportunityId } };
+    const rows = await service.list(db, actor, full);
+    res.json(withTotal ? { rows, total: await service.count(db, actor, full) } : rows);
+  }) satisfies Handler);
+  router.post(`${path}/bulk`, (async (req, res) => {
+    res.json(await service.bulk(db, actorOf(req), req.body));
   }) satisfies Handler);
   router.post(path, (async (req, res) => {
     // ?allowDuplicate=1 is sent after the user has been shown the matches.

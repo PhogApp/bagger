@@ -7,7 +7,7 @@ import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useMe, useOrgUsers, useStatuses } from "@/lib/api";
-import { formatPhone } from "@/lib/utils";
+import { formatDate, formatPhone } from "@/lib/utils";
 import {
   confirmStatusChange,
   defaultStatus,
@@ -67,17 +67,40 @@ export function LeadsPage() {
   const columns: Column<Lead>[] = [
     {
       header: "Name",
+      sort: "name",
+      csv: (l) => `${l.firstName} ${l.lastName}`,
       cell: (l) => <span className="font-medium">{`${l.firstName} ${l.lastName}`}</span>,
     },
-    { header: "Title", cell: (l) => l.title ?? "—" },
-    { header: "Company", cell: (l) => l.company ?? "—" },
+    { header: "Title", sort: "title", cell: (l) => l.title ?? "—" },
+    { header: "Company", sort: "company", cell: (l) => l.company ?? "—" },
     { header: "Phone", cell: (l) => formatPhone(l.cellPhone ?? l.directPhone ?? l.hqPhone) },
-    { header: "Owner", cell: (l) => nameOf(users, l.ownerId) },
+    { header: "Owner", sort: "owner", cell: (l) => nameOf(users, l.ownerId) },
     {
       header: "Status",
+      sort: "status",
+      csv: (l) => l.status,
       cell: (l) => (
         <StatusBadge status={l.status} color={statusColor(statuses, "leads", l.status)} />
       ),
+    },
+
+    {
+      header: "Email",
+      sort: "email",
+      hidden: true,
+      cell: (l) => l.email,
+    },
+    {
+      header: "Created",
+      sort: "createdAt",
+      hidden: true,
+      cell: (l) => formatDate(l.createdAt as string),
+    },
+    {
+      header: "Last Modified",
+      sort: "updatedAt",
+      hidden: true,
+      cell: (l) => formatDate(l.updatedAt as string),
     },
   ];
 
@@ -93,6 +116,7 @@ export function LeadsPage() {
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "leads"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/leads/${id}`}
+      listTools={{ statusObject: "leads", customObject: "leads" }}
       headerActions={
         canUse(me, "data.import") && permissionsFor(me, "leads").canCreate ? (
           <ImportButton kind="leads" />

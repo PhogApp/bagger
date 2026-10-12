@@ -23,7 +23,27 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiError, permissionsFor, useApi, useMe } from "@/lib/api";
+import {
+  BulkChanges,
+  ColumnPicker,
+  downloadCsv,
+  ExportButton,
+  OwnerFilter,
+  Pager,
+  StatusFilter,
+  useListPrefs,
+} from "@/components/ListTools";
+import {
+  ApiError,
+  canUse,
+  permissionsFor,
+  useApi,
+  useMe,
+  useOrgUsers,
+  useStatuses,
+  type StatusObject,
+} from "@/lib/api";
+import { customFieldAsField, useFieldSetup, type LayoutObject } from "@/lib/fields";
 import { cn, formatDateTime } from "@/lib/utils";
 
 /**
@@ -41,15 +61,7 @@ export interface Field {
   name: string;
   label: string;
   kind?:
-    | "text"
-    | "number"
-    | "email"
-    | "tel"
-    | "url"
-    | "date"
-    | "textarea"
-    | "select"
-    | "multiselect";
+    "text" | "number" | "email" | "tel" | "url" | "date" | "textarea" | "select" | "multiselect";
   required?: boolean;
   options?: Option[];
   placeholder?: string;
@@ -116,7 +128,12 @@ export function MultiSelect(props: {
               const next = new Set(chosen);
               if (e.target.checked) next.add(o.value);
               else next.delete(o.value);
-              props.onChange(props.options.filter((x) => next.has(x.value)).map((x) => x.value).join("; "));
+              props.onChange(
+                props.options
+                  .filter((x) => next.has(x.value))
+                  .map((x) => x.value)
+                  .join("; "),
+              );
             }}
           />
           {o.label}
@@ -129,7 +146,17 @@ export function MultiSelect(props: {
 export interface Column<T> {
   header: string;
   cell: (row: T) => ReactNode;
+  /** A stable name for the column; defaults to the header. */
+  key?: string;
+  /** The server's name for sorting by this column, if it can be sorted. */
+  sort?: string;
+  /** The value in a CSV export, when the cell isn't plain text. */
+  csv?: (row: T) => string | number | null | undefined;
+  /** Offered in the column picker but not shown until chosen. */
+  hidden?: boolean;
 }
+
+const columnId = <T,>(c: Column<T>) => c.key ?? c.header;
 
 interface BaseRecord {
   id: string;
@@ -162,6 +189,16 @@ export interface RecordPageProps<T extends BaseRecord> {
   related?: (row: T) => ReactNode;
   /** Extra buttons in the edit dialog for one record, e.g. Convert. Call `close` when done. */
   recordActions?: (row: T, close: () => void) => ReactNode;
+  /**
+   * Turns on owner and status filters, custom field columns, bulk changes and
+   * export, for the record types that have them.
+   */
+  listTools?: {
+    statusObject?: StatusObject;
+    customObject?: LayoutObject;
+    /** What the status is called on this record type, e.g. "Stage". */
+    statusLabel?: string;
+  };
   /** Draws the rows some other way than the table, e.g. a board. Call `open` to edit one. */
   renderList?: (rows: T[], open: (row: T) => void) => ReactNode;
   /** Extra buttons beside "Add", e.g. Import. */
@@ -354,14 +391,129 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   // Records the server says this new one may duplicate; the user decides.
   const [duplicates, setDuplicates] = useState<DuplicateMatch[] | null>(null);
 
-  const list = useQuery({
-    queryKey: [object, q],
-    queryFn: () => api<T[]>("GET", `/api/${object}${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  const tools = props.listTools;
+  const { data: users } = useOrgUsers();
+  const { data: statuses } = useStatuses();
+  const { data: fieldSetup } = useFieldSetup();
+  const [prefs, setPrefs] = useListPrefs(object);
+  const [offset, setOffset] = useState(0);
+  const statusOptions = tools?.statusObject
+    ? (statuses ?? []).filter((st) => st.object === tools.statusObject)
+    : [];
+  // A board shows everything at once; a table goes a page at a time.
+  const pageSize = props.renderList ? 500 : prefs.pageSize;
+
+  const listParams = new URLSearchParams({
+    withTotal: "1",
+    limit: String(pageSize),
+    offset: String(props.renderList ? 0 : offset),
   });
+  if (q) listParams.set("q", q);
+  if (prefs.sort) {
+    listParams.set("sort", prefs.sort);
+    listParams.set("dir", prefs.dir);
+  }
+  if (tools && prefs.owner) listParams.set("owner", prefs.owner);
+  // Statuses that no longer exist are dropped rather than matching nothing.
+  for (const st of prefs.statuses) {
+    if (statusOptions.some((o) => o.name === st)) listParams.append("status", st);
+  }
+  const query = listParams.toString();
+  useEffect(
+    () => setOffset(0),
+    [q, prefs.sort, prefs.dir, prefs.owner, prefs.statuses.join("|"), prefs.pageSize],
+  );
+
+  const list = useQuery({
+    queryKey: [object, "list", query],
+    queryFn: () => api<{ rows: T[]; total: number }>("GET", `/api/${object}?${query}`),
+    placeholderData: (previous) => previous,
+  });
+
+  // Every column the picker offers: the page's own, then custom fields.
+  const allColumns: Column<T>[] = [
+    ...props.columns,
+    ...(tools?.customObject
+      ? (fieldSetup?.fields ?? [])
+          .filter((f) => f.object === tools.customObject && !f.archived)
+          .map((def): Column<T> => {
+            const field = customFieldAsField(def, users);
+            const read = (row: T) => valueOf(row as unknown as Record<string, unknown>, field.name);
+            const text = (row: T) => {
+              const v = read(row);
+              const option = field.options?.find((o) => o.value === asText(v));
+              return option?.label ?? asText(v);
+            };
+            return {
+              key: field.name,
+              header: def.label,
+              sort: def.type === "multipicklist" ? undefined : field.name,
+              hidden: true,
+              cell: (row) => {
+                const v = read(row);
+                return (field.format?.(v) ?? text(row)) || "—";
+              },
+              csv: (row) =>
+                def.type === "number" || def.type === "currency"
+                  ? (read(row) as number)
+                  : text(row),
+            };
+          })
+      : []),
+  ];
+  const shownIds = prefs.columns ?? allColumns.filter((c) => !c.hidden).map(columnId);
+  const columns = shownIds
+    .map((id) => allColumns.find((c) => columnId(c) === id))
+    .filter((c): c is Column<T> => Boolean(c));
+  const csvValue = (c: Column<T>, row: T) => {
+    if (c.csv) return c.csv(row);
+    const v = c.cell(row);
+    return typeof v === "string" || typeof v === "number" ? v : "";
+  };
+  const canExport = Boolean(tools) && canUse(me, "data.export_lists");
+  const [exporting, setExporting] = useState(false);
+  const exportRows = (chosen: T[]) =>
+    downloadCsv(`bagger-${object}-${new Date().toISOString().slice(0, 10)}`, [
+      columns.map((c) => c.header),
+      ...chosen.map((row) => columns.map((c) => csvValue(c, row))),
+    ]);
+  // Everything that matches the current search and filters, a page at a time.
+  const exportAll = async () => {
+    setExporting(true);
+    try {
+      const all: T[] = [];
+      for (let from = 0; from < 50000; from += 500) {
+        const next = new URLSearchParams(listParams);
+        next.set("limit", "500");
+        next.set("offset", String(from));
+        const page = await api<{ rows: T[]; total: number }>("GET", `/api/${object}?${next}`);
+        all.push(...page.rows);
+        if (all.length >= page.total || page.rows.length === 0) break;
+      }
+      exportRows(all);
+    } finally {
+      setExporting(false);
+    }
+  };
+  const sortBy = (c: Column<T>) => {
+    if (!c.sort) return;
+    setPrefs({
+      sort: c.sort,
+      dir: prefs.sort === c.sort && prefs.dir === "asc" ? "desc" : "asc",
+    });
+  };
 
   // Rows ticked for a bulk action. Only rows still on screen count.
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const rows = list.data ?? [];
+  const rows = list.data?.rows ?? [];
+  const selectable = Boolean(props.bulkActions || tools);
+  // The outcome of the last bulk change, kept on screen for a while.
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const selected = rows.filter((r) => checked.has(r.id));
   const allChecked = rows.length > 0 && selected.length === rows.length;
   const toggle = (id: string) =>
@@ -557,29 +709,99 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                 aria-label={props.searchPlaceholder}
               />
             </div>
+            {tools && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <OwnerFilter
+                  users={users}
+                  me={me}
+                  value={prefs.owner}
+                  onChange={(owner) => setPrefs({ owner })}
+                />
+                {tools.statusObject && (
+                  <StatusFilter
+                    label={tools.statusLabel ?? "Status"}
+                    options={statusOptions}
+                    chosen={prefs.statuses}
+                    onChange={(st) => setPrefs({ statuses: st })}
+                  />
+                )}
+                {(prefs.owner || prefs.statuses.length > 0) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-9"
+                    onClick={() => setPrefs({ owner: "", statuses: [] })}
+                  >
+                    Clear filters
+                  </Button>
+                )}
+                <span className="ml-auto text-sm text-muted-foreground">
+                  {list.data &&
+                    `${list.data.total.toLocaleString()} ${
+                      list.data.total === 1 ? singular.toLowerCase() : props.title.toLowerCase()
+                    }`}
+                </span>
+                {!props.renderList && (
+                  <ColumnPicker
+                    available={allColumns.map((c) => ({ id: columnId(c), label: c.header }))}
+                    shown={shownIds}
+                    onChange={(ids) => setPrefs({ columns: ids })}
+                  />
+                )}
+                {canExport && <ExportButton busy={exporting} onClick={() => void exportAll()} />}
+              </div>
+            )}
           </div>
 
-          {props.bulkActions && selected.length > 0 && (
-            <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-2 text-sm">
+          {selectable && selected.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 border-b bg-muted/60 px-4 py-2 text-sm">
               <span className="font-medium">{selected.length} selected</span>
-              {props.bulkActions(selected, () => setChecked(new Set()))}
+              {props.bulkActions?.(selected, () => setChecked(new Set()))}
+              {tools && (
+                <BulkChanges
+                  object={object}
+                  plural={props.title.toLowerCase()}
+                  ids={selected.map((r) => r.id)}
+                  me={me}
+                  users={users}
+                  statuses={statusOptions}
+                  statusLabel={tools.statusLabel ?? "Status"}
+                  canDelete={selected.every((r) => can.canDelete(r.ownerId))}
+                  onDone={() => setChecked(new Set())}
+                  onResult={setNotice}
+                />
+              )}
+              {canExport && (
+                <ExportButton label="Export selected" onClick={() => exportRows(selected)} />
+              )}
               <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())}>
                 Clear
               </Button>
             </div>
           )}
 
+          {notice && selected.length === 0 && (
+            <p role="status" className="border-b bg-muted/60 px-4 py-2 text-sm">
+              {notice}
+            </p>
+          )}
           {list.error ? (
             <p className="p-8 text-center text-sm text-destructive">{list.error.message}</p>
           ) : list.isLoading ? (
             <p className="p-8 text-center text-sm text-muted-foreground">Loading…</p>
-          ) : list.data?.length === 0 ? (
+          ) : rows.length === 0 ? (
             <p className="p-8 text-center text-sm text-muted-foreground">
-              {q
-                ? `No ${props.title.toLowerCase()} match “${q}”.`
-                : `No ${props.title.toLowerCase()} yet.${
-                    can.canCreate ? ` Add your first ${singular.toLowerCase()} to get started.` : ""
-                  }`}
+              {q || prefs.owner || prefs.statuses.length
+                ? `No ${props.title.toLowerCase()} match${q ? ` “${q}”` : ""}${
+                    prefs.owner || prefs.statuses.length ? " these filters" : ""
+                  }.`
+                : q
+                  ? `No ${props.title.toLowerCase()} match “${q}”.`
+                  : `No ${props.title.toLowerCase()} yet.${
+                      can.canCreate
+                        ? ` Add your first ${singular.toLowerCase()} to get started.`
+                        : ""
+                    }`}
             </p>
           ) : props.renderList ? (
             props.renderList(rows, openRow)
@@ -587,7 +809,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {props.bulkActions && (
+                  {selectable && (
                     <TableHead className="w-10">
                       <input
                         type="checkbox"
@@ -599,13 +821,35 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                       />
                     </TableHead>
                   )}
-                  {props.columns.map((c) => (
-                    <TableHead key={c.header}>{c.header}</TableHead>
+                  {columns.map((c) => (
+                    <TableHead
+                      key={columnId(c)}
+                      aria-sort={
+                        prefs.sort && prefs.sort === c.sort
+                          ? prefs.dir === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : undefined
+                      }
+                    >
+                      {c.sort ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 hover:text-foreground"
+                          onClick={() => sortBy(c)}
+                        >
+                          {c.header}
+                          {prefs.sort === c.sort && (prefs.dir === "asc" ? " ↑" : " ↓")}
+                        </button>
+                      ) : (
+                        c.header
+                      )}
+                    </TableHead>
                   ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {list.data?.map((row) => (
+                {rows.map((row) => (
                   <TableRow
                     key={row.id}
                     className="cursor-pointer"
@@ -615,7 +859,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                       if (e.key === "Enter") openRow(row);
                     }}
                   >
-                    {props.bulkActions && (
+                    {selectable && (
                       // Clicking the box must not also open the record.
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <input
@@ -626,13 +870,25 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                         />
                       </TableCell>
                     )}
-                    {props.columns.map((c) => (
-                      <TableCell key={c.header}>{c.cell(row)}</TableCell>
+                    {columns.map((c) => (
+                      <TableCell key={columnId(c)}>{c.cell(row)}</TableCell>
                     ))}
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+          )}
+          {!props.renderList && list.data && (
+            <Pager
+              offset={offset}
+              pageSize={pageSize}
+              total={list.data.total}
+              onOffset={(o) => {
+                setOffset(o);
+                setChecked(new Set());
+              }}
+              onPageSize={(n) => setPrefs({ pageSize: n })}
+            />
           )}
         </div>
       </div>
@@ -686,10 +942,11 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
           )}
 
           {duplicates && (
-            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
-              <p className="font-medium text-amber-900">
-                This may already be in Bagger:
-              </p>
+            <div
+              role="alert"
+              className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm"
+            >
+              <p className="font-medium text-amber-900">This may already be in Bagger:</p>
               <ul className="mt-1 list-disc pl-5 text-amber-900">
                 {duplicates.map((d) => (
                   <li key={d.id}>
