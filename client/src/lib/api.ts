@@ -180,3 +180,24 @@ export interface Activity {
   accountName: string | null;
   opportunityName: string | null;
 }
+
+export type TodoType = "todo" | "call" | "email" | "linkedin" | "meeting";
+export interface Todo {
+  id: string;
+  type: TodoType;
+  title: string;
+  notes: string | null;
+  dueOn: string;
+  state: "open" | "done";
+  doneAt: string | null;
+  ownerId: string;
+  ownerName: string | null;
+  createdBy: string | null;
+  leadId: string | null;
+  contactId: string | null;
+  accountId: string | null;
+  opportunityId: string | null;
+  personName: string | null;
+  accountName: string | null;
+  opportunityName: string | null;
+}

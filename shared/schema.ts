@@ -459,6 +459,55 @@ export const activities = pgTable(
   ],
 );
 
+// --------------------------------------------------------------- to-dos
+
+export const TODO_TYPES = ["todo", "call", "email", "linkedin", "meeting"] as const;
+export type TodoType = (typeof TODO_TYPES)[number];
+
+/**
+ * A one-off task with a due date, such as "call Jill back Thursday". It can
+ * hang off a lead, contact, account or opportunity, and shows in its
+ * owner's Run Steps when due. Completing a call, email, LinkedIn or meeting
+ * to-do logs the activity. Sequence steps are not to-dos; the sequence
+ * engine keeps those in step_tasks.
+ */
+export const todos = pgTable(
+  "todos",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** Who it is for. */
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    createdBy: uuid("created_by").references(() => users.id),
+    type: text("type").$type<TodoType>().notNull().default("todo"),
+    title: text("title").notNull(),
+    notes: text("notes"),
+    /** Calendar date in the owner's time zone. */
+    dueOn: date("due_on").notNull(),
+    state: text("state").$type<"open" | "done">().notNull().default("open"),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    doneBy: uuid("done_by").references(() => users.id),
+    leadId: uuid("lead_id").references(() => leads.id),
+    contactId: uuid("contact_id").references(() => contacts.id),
+    accountId: uuid("account_id").references(() => accounts.id),
+    opportunityId: uuid("opportunity_id").references(() => opportunities.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    deletedAt: deletedAt(),
+  },
+  (t) => [
+    index("todos_owner_due_idx").on(t.orgId, t.ownerId, t.state, t.dueOn),
+    index("todos_lead_idx").on(t.leadId),
+    index("todos_contact_idx").on(t.contactId),
+    index("todos_account_idx").on(t.accountId),
+    index("todos_opportunity_idx").on(t.opportunityId),
+  ],
+);
+
 // -------------------------------------------------------------- reports
 
 /** A report someone built and saved: what it shows is in `definition`. */

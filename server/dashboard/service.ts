@@ -8,6 +8,7 @@ import {
   orgSettings,
   statusOptions,
   stepTasks,
+  todos,
   users,
 } from "../../shared/schema";
 import { isMember, type Actor } from "../auth/actor";
@@ -72,6 +73,22 @@ export async function getDashboard(db: Db, actor: Actor, raw: unknown, now = new
         eq(stepTasks.state, "open"),
         eq(enrollments.state, "active"),
         ...mine(stepTasks.ownerId),
+      ),
+    );
+
+  // ---- to-dos waiting
+  const [todoCounts] = await db
+    .select({
+      dueToday: sql<number>`count(*) filter (where ${todos.dueOn} = ${today})::int`,
+      overdue: sql<number>`count(*) filter (where ${todos.dueOn} < ${today})::int`,
+    })
+    .from(todos)
+    .where(
+      and(
+        eq(todos.orgId, actor.orgId),
+        isNull(todos.deletedAt),
+        eq(todos.state, "open"),
+        ...mine(todos.ownerId),
       ),
     );
 
@@ -190,6 +207,7 @@ export async function getDashboard(db: Db, actor: Actor, raw: unknown, now = new
     owner: ownerId ?? "all",
     today,
     steps: { dueToday: steps?.dueToday ?? 0, overdue: steps?.overdue ?? 0 },
+    todos: { dueToday: todoCounts?.dueToday ?? 0, overdue: todoCounts?.overdue ?? 0 },
     activityThisWeek: {
       call: activityThisWeek.call ?? 0,
       email: activityThisWeek.email ?? 0,

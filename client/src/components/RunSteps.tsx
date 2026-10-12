@@ -24,8 +24,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import { canUse, useApi, useMe } from "@/lib/api";
-import { formatDate, formatPhone } from "@/lib/utils";
+import { AddTodo, TodoList, useTodos } from "@/components/Todos";
+import { canUse, permissionsFor, useApi, useMe } from "@/lib/api";
+import { cn, formatDate, formatPhone } from "@/lib/utils";
 
 type StepType = "email" | "phone_call" | "linkedin_connect" | "linkedin_message";
 
@@ -108,11 +109,17 @@ function useDueTasks(enabled: boolean) {
 /** The button in the top bar, with the number of steps waiting. */
 export function RunStepsButton() {
   const { data: me } = useMe();
-  const allowed = canUse(me, "sequences.enroll");
+  const runsSteps = canUse(me, "sequences.enroll");
+  const hasTodos = permissionsFor(me, "activities").canCreate;
   const [open, setOpen] = useState(false);
-  const tasks = useDueTasks(allowed);
-  if (!allowed) return null;
-  const count = tasks.data?.length ?? 0;
+  const [tab, setTab] = useState<"steps" | "todos">("steps");
+  const tasks = useDueTasks(runsSteps);
+  const todos = useTodos("show=due", hasTodos);
+  if (!runsSteps && !hasTodos) return null;
+  const stepCount = tasks.data?.length ?? 0;
+  const todoCount = todos.data?.length ?? 0;
+  const count = stepCount + todoCount;
+  const showing = runsSteps ? tab : "todos";
   return (
     <>
       <Button onClick={() => setOpen(true)}>
@@ -126,12 +133,73 @@ export function RunStepsButton() {
         <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md">
           <SheetHeader className="border-b p-4">
             <SheetTitle>Run Steps</SheetTitle>
-            <SheetDescription>Steps due today or earlier, one at a time.</SheetDescription>
+            <SheetDescription>Sequence steps and to-dos due today or earlier.</SheetDescription>
           </SheetHeader>
-          <RunStepsPanel tasks={tasks.data ?? []} loading={tasks.isLoading} />
+          {runsSteps && (
+            <div className="flex border-b px-4" role="tablist" aria-label="What to work on">
+              {(
+                [
+                  ["steps", `Sequence steps (${stepCount})`],
+                  ["todos", `To-dos (${todoCount})`],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={showing === value}
+                  onClick={() => setTab(value)}
+                  className={cn(
+                    "-mb-px border-b-2 px-3 py-2.5 text-sm font-medium",
+                    showing === value
+                      ? "border-primary text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {showing === "steps" ? (
+            <RunStepsPanel tasks={tasks.data ?? []} loading={tasks.isLoading} />
+          ) : (
+            <TodosPanel />
+          )}
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+/** The To-dos tab of Run Steps: what's due, or everything still open. */
+function TodosPanel() {
+  const [show, setShow] = useState<"due" | "open">("due");
+  const todos = useTodos(`show=${show}`);
+  return (
+    <div className="space-y-3 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <select
+          aria-label="Which to-dos"
+          className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+          value={show}
+          onChange={(e) => setShow(e.target.value as "due" | "open")}
+        >
+          <option value="due">Due today or earlier</option>
+          <option value="open">Everything still open</option>
+        </select>
+        <AddTodo />
+      </div>
+      {todos.isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <TodoList
+          todos={todos.data ?? []}
+          showAbout
+          empty={show === "due" ? "Nothing due. Nice work." : "No open to-dos."}
+        />
+      )}
+    </div>
   );
 }
 
@@ -397,9 +465,7 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
           <Button
             className="w-full"
             disabled={act.isPending || editing}
-            onClick={() =>
-              act.mutate(() => api("POST", `${base}/complete`, note ? { note } : {}))
-            }
+            onClick={() => act.mutate(() => api("POST", `${base}/complete`, note ? { note } : {}))}
           >
             <Check className="mr-2 h-4 w-4" aria-hidden />
             Mark Complete

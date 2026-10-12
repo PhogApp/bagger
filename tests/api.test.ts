@@ -1750,6 +1750,97 @@ describe("list paging, sorting, filters and bulk changes", () => {
   });
 });
 
+describe("to-dos", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  let seller2: Ctx;
+  let watcher: Ctx;
+  let account: { id: string };
+  let contact: { id: string };
+  const today = localDate(new Date(), "America/Chicago");
+  const shift = (days: number) => {
+    const d = new Date(`${today}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { waitDayMode: "calendar" });
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    seller2 = await addMember(db, boss.orgId, "rep", "Sue Seller");
+    watcher = await addMember(db, boss.orgId, "read_only", "Wes Watcher");
+    account = (await as(seller).post("/api/accounts", { name: "Todo Co" })).body;
+    contact = (await as(seller).post("/api/contacts", { firstName: "Tia", lastName: "Todo", email: "tia@todo.example", accountId: account.id })).body;
+  });
+
+  it("makes to-dos about a record, files them under its account, and lists what is due", async () => {
+    const call = await as(seller).post("/api/todos", { title: "Call Tia back", type: "call", dueOn: today, contactId: contact.id });
+    expect(call.status).toBe(201);
+    expect(call.body).toMatchObject({ ownerId: seller.userId, accountId: account.id, state: "open" });
+    await as(seller).post("/api/todos", { title: "Overdue thing", dueOn: shift(-2) });
+    await as(seller).post("/api/todos", { title: "Next week", dueOn: shift(7), accountId: account.id });
+    await as(seller).post("/api/todos", { title: "For Sue", dueOn: today, ownerId: seller2.userId });
+
+    const due = (await as(seller).get("/api/todos?show=due")).body;
+    expect(due.map((t: { title: string }) => t.title)).toEqual(["Overdue thing", "Call Tia back"]);
+    expect(due[1]).toMatchObject({ personName: "Tia Todo", accountName: "Todo Co" });
+    expect((await as(seller).get("/api/todos?show=open")).body).toHaveLength(3);
+    const onAccount = (await as(seller2).get(`/api/todos?accountId=${account.id}`)).body;
+    expect(onAccount.map((t: { title: string }) => t.title)).toEqual(["Call Tia back", "Next week"]);
+    expect((await as(seller2).get("/api/todos?show=due")).body.map((t: { title: string }) => t.title)).toEqual(["For Sue"]);
+    // A rep sees only their own list; a manager or admin can look at another's.
+    expect((await as(seller2).get(`/api/todos?owner=${seller.userId}`)).status).toBe(403);
+    expect((await as(boss).get(`/api/todos?owner=${seller.userId}&show=due`)).body).toHaveLength(2);
+
+    const dash = (await as(seller).get("/api/dashboard")).body;
+    expect(dash.todos).toEqual({ dueToday: 1, overdue: 1 });
+
+    const bad = (body: object) => as(seller).post("/api/todos", { title: "x", dueOn: today, ...body });
+    expect((await bad({ dueOn: "tomorrow" })).status).toBe(400);
+    expect((await bad({ title: "" })).status).toBe(400);
+    expect((await bad({ ownerId: outsider.userId })).status).toBe(400);
+    const foreign = (await as(outsider).post("/api/accounts", { name: "Foreign Todo" })).body;
+    expect((await bad({ accountId: foreign.id })).status).toBe(400);
+    expect((await as(watcher).post("/api/todos", { title: "x", dueOn: today })).status).toBe(403);
+  });
+
+  it("logs the activity when a call to-do is done, and can be reopened", async () => {
+    const todo = (await as(seller).post("/api/todos", { title: "Discovery call", type: "call", dueOn: today, contactId: contact.id, notes: "Ask about ERP" })).body;
+    const done = await as(seller).post(`/api/todos/${todo.id}/complete`, { note: "Booked a demo" });
+    expect(done.body).toMatchObject({ state: "done", doneBy: seller.userId });
+    const timeline = (await as(seller).get(`/api/activities?contactId=${contact.id}`)).body;
+    expect(timeline[0]).toMatchObject({ type: "call", subject: "Discovery call", body: "Ask about ERP\n\nBooked a demo" });
+    expect((await as(seller).post(`/api/todos/${todo.id}/complete`, {})).status).toBe(400);
+    expect((await as(seller).post(`/api/todos/${todo.id}/reopen`)).body.state).toBe("open");
+    // A plain to-do logs nothing.
+    const plain = (await as(seller).post("/api/todos", { title: "Send proposal", dueOn: today, contactId: contact.id })).body;
+    await as(seller).post(`/api/todos/${plain.id}/complete`, {});
+    expect((await as(seller).get(`/api/activities?contactId=${contact.id}`)).body).toHaveLength(1);
+  });
+
+  it("lets people reschedule and reassign, and guards deleting", async () => {
+    const todo = (await as(seller).post("/api/todos", { title: "Move me", dueOn: today })).body;
+    const moved = await as(seller).patch(`/api/todos/${todo.id}`, { dueOn: shift(3), ownerId: seller2.userId });
+    expect(moved.body).toMatchObject({ dueOn: shift(3), ownerId: seller2.userId });
+    const history = (await as(boss).get(`/api/history/todo/${todo.id}`)).body;
+    expect(history.map((h: { field: string }) => h.field).sort()).toEqual(["dueOn", "ownerId", null].sort());
+    // The person who made it, or whoever it is for, may delete it; another rep may not.
+    const third = await addMember(db, boss.orgId, "rep", "Tom Third");
+    expect((await as(third).del(`/api/todos/${todo.id}`)).status).toBe(403);
+    expect((await as(seller).del(`/api/todos/${todo.id}`)).status).toBe(204);
+    expect((await as(outsider).patch(`/api/todos/${todo.id}`, { title: "x" })).status).toBe(404);
+  });
+
+  it("moves a lead's to-dos to the contact on conversion", async () => {
+    const lead = (await as(seller).post("/api/leads", { firstName: "Lu", lastName: "Todo", email: "lu@todo.example" })).body;
+    await as(seller).post("/api/todos", { title: "Follow up with Lu", dueOn: today, leadId: lead.id });
+    const converted = (await as(seller).post(`/api/leads/${lead.id}/convert`, { accountId: account.id })).body;
+    const onContact = (await as(seller).get(`/api/todos?contactId=${converted.contactId}`)).body;
+    expect(onContact.map((t: { title: string }) => t.title)).toEqual(["Follow up with Lu"]);
+    expect((await as(seller).post("/api/todos", { title: "x", dueOn: today, leadId: lead.id })).status).toBe(400);
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;

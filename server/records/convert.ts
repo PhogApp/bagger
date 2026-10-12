@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, activities, contacts, events, leads } from "../../shared/schema";
+import { accounts, activities, contacts, events, leads, todos } from "../../shared/schema";
 import { recordLifecycle, recordUpdate } from "../audit/history";
 import type { Actor } from "../auth/actor";
 import { canCreate, PermissionError, requireRecord } from "../auth/permissions";
@@ -211,6 +211,10 @@ export async function convertLead(
       .update(activities)
       .set({ leadId: null, contactId: contact.id, accountId })
       .where(and(eq(activities.orgId, actor.orgId), eq(activities.leadId, lead.id)));
+    await tx
+      .update(todos)
+      .set({ leadId: null, contactId: contact.id, accountId })
+      .where(and(eq(todos.orgId, actor.orgId), eq(todos.leadId, lead.id)));
     await tx.insert(events).values({
       orgId: actor.orgId,
       type: "lead_converted",

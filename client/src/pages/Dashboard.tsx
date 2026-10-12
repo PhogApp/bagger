@@ -19,6 +19,7 @@ interface Dashboard {
   owner: string;
   today: string;
   steps: { dueToday: number; overdue: number };
+  todos: { dueToday: number; overdue: number };
   activityThisWeek: Record<ActivityType, number>;
   sequences: {
     inSequence: number;
@@ -120,7 +121,7 @@ export function DashboardPage() {
       ) : (
         <div className="grid gap-4 p-6 lg:grid-cols-2">
           <Panel
-            title="Sequences"
+            title="Your work"
             action={
               owner === "me" && (
                 <Link
@@ -140,6 +141,13 @@ export function DashboardPage() {
                 tone={d.steps.overdue > 0 ? "alert" : undefined}
               />
               <Stat label="People in a sequence" value={String(d.sequences.inSequence)} />
+              <Stat label="To-dos due today" value={String(d.todos.dueToday)} />
+              <Stat
+                label="Overdue to-dos"
+                value={String(d.todos.overdue)}
+                tone={d.todos.overdue > 0 ? "alert" : undefined}
+              />
+              <span aria-hidden />
               <Stat
                 label="Replies"
                 value={String(d.sequences.last30Days.replied)}

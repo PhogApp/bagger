@@ -33,6 +33,7 @@ import * as fields from "../fields/service";
 import * as builder from "../reports/builder";
 import * as reports from "../reports/standard";
 import * as settings from "../settings/service";
+import * as todoService from "../todos/service";
 import * as statuses from "../statuses/service";
 
 /**
@@ -402,6 +403,27 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.get("/reports/conversion", async (req, res) => {
     res.json(await reports.conversionReport(db, actorOf(req), req.query));
   });
+  // ---- to-dos
+  api.get("/todos", async (req, res) => {
+    res.json(await todoService.listTodos(db, actorOf(req), req.query));
+  });
+  api.post("/todos", async (req, res) => {
+    res.status(201).json(await todoService.createTodo(db, actorOf(req), req.body));
+  });
+  api.patch("/todos/:id", async (req, res) => {
+    res.json(await todoService.updateTodo(db, actorOf(req), id(req), req.body));
+  });
+  api.post("/todos/:id/complete", async (req, res) => {
+    res.json(await todoService.completeTodo(db, actorOf(req), id(req), req.body));
+  });
+  api.post("/todos/:id/reopen", async (req, res) => {
+    res.json(await todoService.reopenTodo(db, actorOf(req), id(req)));
+  });
+  api.delete("/todos/:id", async (req, res) => {
+    await todoService.deleteTodo(db, actorOf(req), id(req));
+    res.status(204).end();
+  });
+
   api.get("/dashboard", async (req, res) => {
     res.json(await dashboard.getDashboard(db, actorOf(req), req.query));
   });

@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Pencil } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { ActivityTimeline, type ActivityAbout } from "@/components/ActivityTimeline";
+import { RecordTodos } from "@/components/Todos";
 import { asText, History, MultiSelect, toBody, valueOf, type Field } from "@/components/RecordPage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -500,22 +501,25 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
           {props.below?.(row)}
         </div>
 
-        <section className="rounded-lg border bg-background p-5">
-          <Tabs defaultValue="activity">
-            <TabsList>
-              <TabsTrigger value="activity">Activity</TabsTrigger>
-              {can.canViewHistory && <TabsTrigger value="history">History</TabsTrigger>}
-            </TabsList>
-            <TabsContent value="activity">
-              <ActivityTimeline about={props.activity(row)} />
-            </TabsContent>
-            {can.canViewHistory && (
-              <TabsContent value="history">
-                <History recordType={props.recordType} recordId={row.id} fields={props.fields} />
+        <div className="space-y-6">
+          <RecordTodos about={props.activity(row)} />
+          <section className="rounded-lg border bg-background p-5">
+            <Tabs defaultValue="activity">
+              <TabsList>
+                <TabsTrigger value="activity">Activity</TabsTrigger>
+                {can.canViewHistory && <TabsTrigger value="history">History</TabsTrigger>}
+              </TabsList>
+              <TabsContent value="activity">
+                <ActivityTimeline about={props.activity(row)} />
               </TabsContent>
-            )}
-          </Tabs>
-        </section>
+              {can.canViewHistory && (
+                <TabsContent value="history">
+                  <History recordType={props.recordType} recordId={row.id} fields={props.fields} />
+                </TabsContent>
+              )}
+            </Tabs>
+          </section>
+        </div>
       </div>
     </div>
   );
