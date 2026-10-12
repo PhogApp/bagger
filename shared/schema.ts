@@ -414,6 +414,9 @@ export const opportunityStageHistory = pgTable(
 
 export const ACTIVITY_TYPES = ["call", "email", "linkedin", "meeting", "note"] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+/** Open: still to do, with a due date. Completed: done, with the time it happened. */
+export const ACTIVITY_STATUSES = ["open", "completed"] as const;
+export type ActivityStatus = (typeof ACTIVITY_STATUSES)[number];
 
 /**
  * Something a rep did: a call, an email, a LinkedIn touch, a meeting, or a
@@ -435,7 +438,11 @@ export const activities = pgTable(
     type: text("type").$type<ActivityType>().notNull(),
     subject: text("subject"),
     body: text("body"),
-    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    status: text("status").$type<ActivityStatus>().notNull().default("completed"),
+    /** Open activities: the calendar day it is due, in the owner's time zone. */
+    dueOn: date("due_on", { mode: "string" }),
+    /** When it happened. Empty while the activity is open. */
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow(),
     leadId: uuid("lead_id").references(() => leads.id),
     contactId: uuid("contact_id").references(() => contacts.id),
     accountId: uuid("account_id").references(() => accounts.id),
@@ -448,6 +455,7 @@ export const activities = pgTable(
   },
   (t) => [
     index("activities_org_time_idx").on(t.orgId, t.occurredAt),
+    index("activities_open_idx").on(t.orgId, t.ownerId, t.status, t.dueOn),
     index("activities_lead_idx").on(t.leadId),
     index("activities_contact_idx").on(t.contactId),
     index("activities_account_idx").on(t.accountId),
@@ -455,6 +463,10 @@ export const activities = pgTable(
     check(
       "activities_about_someone",
       sql`${t.leadId} is not null or ${t.contactId} is not null or ${t.accountId} is not null or ${t.opportunityId} is not null`,
+    ),
+    check(
+      "activities_status_dates",
+      sql`(${t.status} = 'open' and ${t.dueOn} is not null and ${t.occurredAt} is null) or (${t.status} = 'completed' and ${t.occurredAt} is not null)`,
     ),
   ],
 );

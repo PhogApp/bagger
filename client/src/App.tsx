@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useApi, useMe } from "./lib/api";
 import { AccountDetailPage, AccountsPage } from "./pages/Accounts";
+import { ActivitiesPage } from "./pages/Activities";
 import { ContactDetailPage, ContactsPage } from "./pages/Contacts";
 import { DashboardPage } from "./pages/Dashboard";
 import { LeadDetailPage, LeadsPage } from "./pages/Leads";
@@ -75,6 +76,7 @@ export function App() {
         <Route path="/accounts/:id" component={AccountDetailPage} />
         <Route path="/opportunities" component={OpportunitiesPage} />
         <Route path="/opportunities/:id" component={OpportunityDetailPage} />
+        <Route path="/activities" component={ActivitiesPage} />
         <Route path="/reports" component={ReportsPage} />
         <Route path="/reports/custom/:id" component={ReportBuilderPage} />
         <Route path="/templates" component={TemplatesPage} />
