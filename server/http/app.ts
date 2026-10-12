@@ -29,6 +29,7 @@ import * as organization from "../orgs/organization";
 import * as activityService from "../activities/service";
 import * as dashboard from "../dashboard/service";
 import * as fields from "../fields/service";
+import * as reports from "../reports/standard";
 import * as settings from "../settings/service";
 import * as statuses from "../statuses/service";
 
@@ -338,6 +339,19 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.delete("/activities/:id", async (req, res) => {
     await activityService.deleteActivity(db, actorOf(req), id(req));
     res.status(204).end();
+  });
+  // ---- standard reports
+  api.get("/reports/sequences", async (req, res) => {
+    res.json(await reports.sequenceReport(db, actorOf(req), req.query));
+  });
+  api.get("/reports/activity", async (req, res) => {
+    res.json(await reports.activityReport(db, actorOf(req), req.query));
+  });
+  api.get("/reports/pipeline", async (req, res) => {
+    res.json(await reports.pipelineReport(db, actorOf(req), req.query));
+  });
+  api.get("/reports/conversion", async (req, res) => {
+    res.json(await reports.conversionReport(db, actorOf(req), req.query));
   });
   api.get("/dashboard", async (req, res) => {
     res.json(await dashboard.getDashboard(db, actorOf(req), req.query));

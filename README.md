@@ -22,6 +22,7 @@ Foundation slice. What exists today:
 | Activities and dashboard | `server/activities/`, `server/dashboard/`, `client/src/pages/Dashboard.tsx`, `client/src/components/ActivityTimeline.tsx` | Calls, emails, LinkedIn touches, meetings and notes, logged by hand or written for each completed step, on an Activity tab of every lead, contact, account and opportunity; the home dashboard for a rep, another rep or everyone |
 | Record pages | `client/src/components/RecordDetail.tsx` | Each lead, contact, account and opportunity has its own page (`/accounts/<id>`): fields that save one at a time as you change them (Escape cancels, Undo after each save, a question before a status that ends a sequence), related records, and Activity and History tabs |
 | Custom fields and layout | `server/fields/service.ts`, `client/src/lib/fields.tsx`, `client/src/components/FieldSettings.tsx` | Admin-defined fields on leads, contacts, accounts and opportunities (12 types, required, picklist choices that rename and replace on records, archive); the order, width and visibility of every field on record pages; custom fields in forms, record pages, History, CSV import, conversion and `{custom.key}` / `{account.key}` merge fields |
+| Reports | `server/reports/standard.ts`, `client/src/pages/Reports.tsx` | Standard reports for a date range and a rep: sequence and step performance, activity by rep and over time, pipeline (open by stage, win rate, average deal, time to win, time in stage) and lead conversion, each downloadable as CSV |
 | CSV import | `server/records/import.ts`, `client/src/components/ImportRecords.tsx` | Leads, contacts and accounts from a CSV file: sample file download, column matching in the browser, a check for records already in Bagger (people by email, accounts by name or website) before anything is saved, then skip or overwrite them; bad rows reported by line |
 
 | Sign-in | `server/auth/clerk.ts`, `server/auth/identity.ts` | Clerk session to Bagger user, organization and role; first sign-in creates them |
@@ -29,7 +30,7 @@ Foundation slice. What exists today:
 | Web client | `client/` | Sign-in, organization picker, app layout, and screens for Leads, Contacts, Accounts, Templates, Sequences (steps, people, enrolling), Run Steps, personal Settings, Admin (wait-day rule, users and roles) and the owner's Organization page |
 | Hosting | `render.yaml` | Render Blueprint for the staging web service and database |
 
-Not built yet: reporting, and billing. Messages are plain text; rich text is not yet supported.
+Not built yet: the report builder, and billing. Messages are plain text; rich text is not yet supported.
 
 ## Sequence rules
 
