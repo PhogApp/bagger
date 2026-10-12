@@ -9,6 +9,7 @@ import { DashboardPage } from "./pages/Dashboard";
 import { LeadDetailPage, LeadsPage } from "./pages/Leads";
 import { OpportunitiesPage, OpportunityDetailPage } from "./pages/Opportunities";
 import { OrganizationPage } from "./pages/Organization";
+import { ReportsPage } from "./pages/Reports";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
 import { AdminPage, browserTimeZone, SettingsPage } from "./pages/Settings";
@@ -73,6 +74,7 @@ export function App() {
         <Route path="/accounts/:id" component={AccountDetailPage} />
         <Route path="/opportunities" component={OpportunitiesPage} />
         <Route path="/opportunities/:id" component={OpportunityDetailPage} />
+        <Route path="/reports" component={ReportsPage} />
         <Route path="/templates" component={TemplatesPage} />
         <Route path="/sequences" component={SequencesPage} />
         <Route path="/sequences/:id" component={SequenceDetailPage} />

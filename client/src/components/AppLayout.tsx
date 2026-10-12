@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Building2,
   CircleDollarSign,
   FileText,
@@ -24,6 +25,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/accounts", label: "Accounts", icon: Building2 },
   { href: "/opportunities", label: "Opportunities", icon: CircleDollarSign },
+  { href: "/reports", label: "Reports", icon: BarChart3 },
   { href: "/templates", label: "Templates", icon: FileText },
   { href: "/sequences", label: "Sequences", icon: ListOrdered },
 ];

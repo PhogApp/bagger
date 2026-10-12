@@ -5,6 +5,7 @@ import { resolveActor } from "../server/auth/actor";
 import type { Ctx, Db } from "../server/db/types";
 import { createApp } from "../server/http/app";
 import * as s from "../shared/schema";
+import { localDate } from "../server/sequences/dates";
 import { addMember, createOrg, createTestDb } from "./helpers";
 
 let db: Db;
@@ -1423,6 +1424,106 @@ describe("custom fields and record layouts", () => {
     const enrolled = (await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { contactId: contact.id })).body;
     const task = (await as(seller).get(`/api/tasks/${enrolled.task.id}`)).body;
     expect(task.content).toMatchObject({ subject: "Cy in Hospitality", body: "As a Gold customer… " });
+  });
+});
+
+describe("standard reports", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  let seller2: Ctx;
+  let viewer2: Ctx;
+  const today = localDate(new Date(), "America/Chicago");
+  const range = (extra = "") => `from=${today}&to=${today}${extra}`;
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { waitDayMode: "calendar" });
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    seller2 = await addMember(db, boss.orgId, "rep", "Sue Seller");
+    viewer2 = await addMember(db, boss.orgId, "read_only", "Vee Viewer");
+
+    // A sequence with two steps: three people in, one replies, one finishes.
+    const sequence = (await as(seller).post("/api/sequences", { name: "Report me" })).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "Email" });
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "phone_call", title: "Call" });
+    const people = [];
+    for (const i of [1, 2, 3]) {
+      const l = (await as(seller).post("/api/leads", { firstName: "R", lastName: `P${i}`, email: `rp${i}@reports.example` })).body;
+      people.push((await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: l.id })).body);
+    }
+    const done = (await as(seller).post(`/api/tasks/${people[0].task.id}/complete`, {})).body;
+    await as(seller).post(`/api/tasks/${done.nextTask.id}/complete`, {}); // finished
+    await as(seller).post(`/api/tasks/${people[1].task.id}/skip`, {});
+    await as(seller).post(`/api/enrollments/${people[2].enrollment.id}/stop`, { reason: "replied" });
+
+    await as(seller2).post("/api/activities", { type: "call", subject: "c1", leadId: people[0].enrollment.leadId });
+    await as(seller2).post("/api/activities", { type: "call", subject: "c2", leadId: people[0].enrollment.leadId });
+
+    const account = (await as(seller).post("/api/accounts", { name: "Reports Co" })).body;
+    const opp = (name: string, amount: number, who = seller) =>
+      as(who).post("/api/opportunities", { name, accountId: account.id, amount }).then((r) => r.body);
+    const a = await opp("Win A", 1000);
+    const b = await opp("Win B", 3000);
+    const c = await opp("Lose C", 500);
+    await opp("Open D", 700);
+    await opp("Open E", 900, seller2);
+    await as(seller).patch(`/api/opportunities/${a.id}`, { status: "Proposal" });
+    await as(seller).patch(`/api/opportunities/${a.id}`, { status: "Closed Won" });
+    await as(seller).patch(`/api/opportunities/${b.id}`, { status: "Closed Won" });
+    await as(seller).patch(`/api/opportunities/${c.id}`, { status: "Closed Lost" });
+
+    const toConvert = (await as(seller).post("/api/leads", { firstName: "Con", lastName: "Vert", email: "conv@reports.example" })).body;
+    await as(seller).post(`/api/leads/${toConvert.id}/convert`, { accountId: account.id });
+  });
+
+  it("reports how each sequence and step is doing", async () => {
+    const res = await as(seller).get(`/api/reports/sequences?${range()}`);
+    expect(res.status).toBe(200);
+    const row = res.body.sequences.find((q: { name: string }) => q.name === "Report me");
+    expect(row).toMatchObject({ enrolled: 3, active: 1, finished: 1, replied: 1, meetingBooked: 0, responseRate: 0.5 });
+    expect(row.steps).toEqual([
+      expect.objectContaining({ title: "Email", completed: 1, skipped: 1 }),
+      expect.objectContaining({ title: "Call", completed: 1, skipped: 0 }),
+    ]);
+    // Seller2 has none of it; yesterday has none of it.
+    const theirs = (await as(boss).get(`/api/reports/sequences?${range(`&owner=${seller2.userId}`)}`)).body;
+    expect(theirs.sequences.find((q: { name: string }) => q.name === "Report me").enrolled).toBe(0);
+  });
+
+  it("counts activity by rep and over time, including completed steps", async () => {
+    const all = (await as(boss).get(`/api/reports/activity?${range("&owner=all&interval=day")}`)).body;
+    const byRep = Object.fromEntries(all.byRep.map((r: { ownerId: string }) => [r.ownerId, r]));
+    expect(byRep[seller.userId]).toMatchObject({ email: 1, call: 1 });
+    expect(byRep[seller2.userId]).toMatchObject({ call: 2 });
+    expect(all.overTime).toEqual([{ period: today, email: 1, call: 3 }]);
+  });
+
+  it("reports the pipeline, win rate and time in each stage", async () => {
+    const p = (await as(seller).get(`/api/reports/pipeline?${range()}`)).body;
+    expect(p.open).toEqual([{ stage: "Prospecting", ownerId: seller.userId, count: 1, amount: 700 }]);
+    expect(p.closed).toMatchObject({ won: 2, lost: 1, wonAmount: 4000, lostAmount: 500, averageWon: 2000 });
+    expect(p.closed.winRate).toBeCloseTo(2 / 3);
+    const stages = Object.fromEntries(p.timeInStage.map((t: { stage: string }) => [t.stage, t]));
+    expect(stages.Prospecting.entries).toBe(4);
+    expect(stages.Proposal.entries).toBe(1);
+    const everyone = (await as(boss).get(`/api/reports/pipeline?${range("&owner=all")}`)).body;
+    expect(everyone.byRep.find((r: { ownerId: string }) => r.ownerId === seller2.userId)).toMatchObject({ openCount: 1, openAmount: 900, winRate: null });
+  });
+
+  it("reports lead conversion", async () => {
+    const c = (await as(seller).get(`/api/reports/conversion?${range()}`)).body;
+    expect(c).toMatchObject({ created: 4, converted: 1, conversionRate: 0.25 });
+    expect(c.averageDaysToConvert).toBeLessThan(1);
+  });
+
+  it("limits who sees whose numbers, and checks the range", async () => {
+    expect((await as(seller).get(`/api/reports/pipeline?${range("&owner=all")}`)).status).toBe(403);
+    expect((await as(seller).get(`/api/reports/pipeline?${range(`&owner=${seller2.userId}`)}`)).status).toBe(403);
+    expect((await as(viewer2).get(`/api/reports/pipeline?${range()}`)).status).toBe(200);
+    expect((await as(seller).get("/api/reports/pipeline?from=2026-10-10&to=2026-10-01")).status).toBe(400);
+    expect((await as(seller).get("/api/reports/pipeline")).status).toBe(400);
+    expect((await as(boss).get(`/api/reports/pipeline?${range(`&owner=${outsider.userId}`)}`)).status).toBe(400);
+    const other = (await as(outsider).get(`/api/reports/conversion?${range()}`)).body;
+    expect(other.converted).toBe(0);
   });
 });
 
