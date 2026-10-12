@@ -354,6 +354,29 @@ describe("accounts and contacts", () => {
     expect(cleared.body.website).toBeNull();
   });
 
+  it("lists the contacts and opportunities on one account", async () => {
+    const one = (await as(rep).post("/api/accounts", { name: "Related One" })).body;
+    const two = (await as(rep).post("/api/accounts", { name: "Related Two" })).body;
+    const person = (email: string, accountId: string) => ({ firstName: "Rae", lastName: "Lated", email, accountId });
+    await as(rep).post("/api/contacts", person("a@related.example", one.id));
+    await as(rep).post("/api/contacts", person("b@related.example", one.id));
+    await as(rep).post("/api/contacts", person("c@related.example", two.id));
+    await as(rep).post("/api/opportunities", { name: "Related deal", accountId: two.id });
+
+    const contactsOfOne = (await as(rep2).get(`/api/contacts?accountId=${one.id}`)).body;
+    expect(contactsOfOne.map((c: { email: string }) => c.email).sort()).toEqual([
+      "a@related.example",
+      "b@related.example",
+    ]);
+    expect((await as(rep2).get(`/api/opportunities?accountId=${one.id}`)).body).toHaveLength(0);
+    const deals = (await as(rep2).get(`/api/opportunities?accountId=${two.id}`)).body;
+    expect(deals.map((o: { name: string }) => o.name)).toEqual(["Related deal"]);
+    // Another organization gets nothing, and leads have no account to filter by.
+    expect((await as(outsider).get(`/api/contacts?accountId=${one.id}`)).body).toHaveLength(0);
+    expect((await as(rep).get(`/api/leads?accountId=${one.id}`)).status).toBe(400);
+    expect((await as(rep).get("/api/contacts?accountId=nope")).status).toBe(400);
+  });
+
   it("will not delete an account that still has contacts", async () => {
     const account = (await as(manager).post("/api/accounts", { name: "Has Contacts" })).body;
     await as(manager).post("/api/contacts", {

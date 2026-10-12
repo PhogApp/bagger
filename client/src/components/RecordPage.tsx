@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -78,6 +79,8 @@ export interface RecordPageProps<T extends BaseRecord> {
   describe: (row: T) => string;
   /** When set, clicking a row calls this instead of opening the edit dialog. */
   onRowOpen?: (row: T) => void;
+  /** Shown under a record's own fields, e.g. the contacts on an account. */
+  related?: (row: T) => ReactNode;
   /** Extra buttons in the edit dialog for one record, e.g. Convert. Call `close` when done. */
   recordActions?: (row: T, close: () => void) => ReactNode;
   /** Draws the rows some other way than the table, e.g. a board. Call `open` to edit one. */
@@ -312,6 +315,27 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
 
   const openRow = (row: T) => (props.onRowOpen ? props.onRowOpen(row) : open(row));
 
+  // A link such as /contacts?open=<id> lands on the list with that record open.
+  const [path, navigate] = useLocation();
+  const linkedId = new URLSearchParams(useSearch()).get("open");
+  useEffect(() => {
+    if (!linkedId) return;
+    let cancelled = false;
+    api<T>("GET", `/api/${object}/${linkedId}`)
+      .then((row) => {
+        if (!cancelled) openRow(row);
+      })
+      .catch(() => undefined) // deleted or not visible: just show the list
+      .finally(() => {
+        if (!cancelled) navigate(path, { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Only the id in the address should trigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedId]);
+
   const done = async () => {
     await queryClient.invalidateQueries({ queryKey: [object] });
     setEditing(null);
@@ -506,14 +530,20 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
           </DialogHeader>
 
           {isNew || !can.canViewHistory ? (
-            form
+            <>
+              {form}
+              {current && props.related?.(current)}
+            </>
           ) : (
             <Tabs defaultValue="details">
               <TabsList>
                 <TabsTrigger value="details">Details</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
               </TabsList>
-              <TabsContent value="details">{form}</TabsContent>
+              <TabsContent value="details">
+                {form}
+                {current && props.related?.(current)}
+              </TabsContent>
               <TabsContent value="history">
                 {current && (
                   <History recordType={props.recordType} recordId={current.id} fields={fields} />

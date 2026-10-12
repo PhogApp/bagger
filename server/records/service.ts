@@ -39,6 +39,8 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   recordType: string;
   /** Validates create input. Updates accept any subset of it. */
   input: TSchema;
+  /** Columns a list can be narrowed by with an exact value, e.g. `accountId`. */
+  filters?: Record<string, AnyPgColumn>;
   /** Text columns matched by the `q` search parameter. */
   search: AnyPgColumn[];
   orderBy: AnyPgColumn[];
@@ -65,6 +67,8 @@ export interface CreateOptions {
 
 export interface ListOptions {
   q?: string;
+  /** Only records on this account, for record types that belong to one. */
+  accountId?: string;
   limit?: number;
   offset?: number;
 }
@@ -110,6 +114,11 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
       const where = [inOrg(actor)];
       if (cfg.hidden) where.push(cfg.hidden);
       if (scope === "own") where.push(eq(t.ownerId, actor.userId));
+      if (options.accountId) {
+        const column = cfg.filters?.accountId;
+        if (!column) throw new ValidationError(`${cfg.object} cannot be listed by account`);
+        where.push(eq(column, options.accountId));
+      }
       const q = options.q?.trim();
       if (q && cfg.search.length > 0) {
         const pattern = `%${q.replace(/[\\%_]/g, "\\$&")}%`;

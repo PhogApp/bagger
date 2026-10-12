@@ -44,6 +44,7 @@ declare module "express-serve-static-core" {
 const idParam = z.uuid();
 const listQuery = z.object({
   q: z.string().optional(),
+  accountId: z.uuid().optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
