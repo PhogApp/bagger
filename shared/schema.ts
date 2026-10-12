@@ -459,6 +459,30 @@ export const activities = pgTable(
   ],
 );
 
+// -------------------------------------------------------------- reports
+
+/** A report someone built and saved: what it shows is in `definition`. */
+export const savedReports = pgTable(
+  "saved_reports",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    name: text("name").notNull(),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+    /** Visible to everyone in the organization, not just its owner. */
+    shared: boolean("shared").notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    deletedAt: deletedAt(),
+  },
+  (t) => [index("saved_reports_org_idx").on(t.orgId)],
+);
+
 export const doNotContact = pgTable(
   "do_not_contact",
   {

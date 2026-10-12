@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useSearch } from "wouter";
+import { SavedReports } from "./ReportBuilder";
 import { ACTIVITY_TYPES } from "@/components/ActivityTimeline";
 import { Bars, Panel, Stat } from "@/components/ReportBits";
 import { Button } from "@/components/ui/button";
@@ -22,8 +24,9 @@ import { cn, formatDay, formatMoney } from "@/lib/utils";
  * roles allowed to export.
  */
 
-type Tab = "sequences" | "activity" | "pipeline" | "conversion";
+type Tab = "sequences" | "activity" | "pipeline" | "conversion" | "custom";
 const TABS: { value: Tab; label: string }[] = [
+  { value: "custom", label: "Custom reports" },
   { value: "sequences", label: "Sequences" },
   { value: "activity", label: "Activity" },
   { value: "pipeline", label: "Pipeline" },
@@ -129,7 +132,10 @@ export function ReportsPage() {
   const { data: me } = useMe();
   const { data: users } = useOrgUsers();
   const { data: statuses } = useStatuses();
-  const [tab, setTab] = useState<Tab>("sequences");
+  // ?tab=custom opens straight onto the saved reports.
+  const [tab, setTab] = useState<Tab>(
+    new URLSearchParams(useSearch()).get("tab") === "custom" ? "custom" : "sequences",
+  );
   const [range, setRange] = useState("month");
   const [[from, to], setDates] = useState(preset("month"));
   const [owner, setOwner] = useState("me");
@@ -142,7 +148,7 @@ export function ReportsPage() {
   const report = useQuery({
     queryKey: ["reports", tab, query],
     queryFn: () => api<unknown>("GET", `/api/reports/${tab}?${query}`),
-    enabled: from <= to,
+    enabled: from <= to && tab !== "custom",
   });
   const fileName = `bagger-${tab}-${from}-to-${to}`;
 
@@ -516,81 +522,83 @@ export function ReportsPage() {
         <p className="text-sm text-muted-foreground">
           How sequences, activity, the pipeline and lead conversion are going.
         </p>
-        <div className="mt-4 flex flex-wrap items-end gap-3">
-          <div className="space-y-1">
-            <label htmlFor="report-range" className="text-xs font-medium text-muted-foreground">
-              Dates
-            </label>
-            <select
-              id="report-range"
-              className={cn(selectClass, "block")}
-              value={range}
-              onChange={(e) => {
-                setRange(e.target.value);
-                if (e.target.value !== "custom") setDates(preset(e.target.value));
-              }}
-            >
-              {PRESETS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label htmlFor="report-from" className="text-xs font-medium text-muted-foreground">
-              From
-            </label>
-            <Input
-              id="report-from"
-              type="date"
-              className="w-40"
-              value={from}
-              onChange={(e) => {
-                setRange("custom");
-                setDates([e.target.value, to]);
-              }}
-            />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor="report-to" className="text-xs font-medium text-muted-foreground">
-              To
-            </label>
-            <Input
-              id="report-to"
-              type="date"
-              className="w-40"
-              value={to}
-              onChange={(e) => {
-                setRange("custom");
-                setDates([from, e.target.value]);
-              }}
-            />
-          </div>
-          {canSeeOthers && (
+        {tab !== "custom" && (
+          <div className="mt-4 flex flex-wrap items-end gap-3">
             <div className="space-y-1">
-              <label htmlFor="report-owner" className="text-xs font-medium text-muted-foreground">
-                Whose numbers
+              <label htmlFor="report-range" className="text-xs font-medium text-muted-foreground">
+                Dates
               </label>
               <select
-                id="report-owner"
+                id="report-range"
                 className={cn(selectClass, "block")}
-                value={owner}
-                onChange={(e) => setOwner(e.target.value)}
+                value={range}
+                onChange={(e) => {
+                  setRange(e.target.value);
+                  if (e.target.value !== "custom") setDates(preset(e.target.value));
+                }}
               >
-                <option value="me">Mine</option>
-                <option value="all">Everyone</option>
-                {(users ?? [])
-                  .filter((u) => u.id !== me?.user.id)
-                  .map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
+                {PRESETS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
               </select>
             </div>
-          )}
-        </div>
+            <div className="space-y-1">
+              <label htmlFor="report-from" className="text-xs font-medium text-muted-foreground">
+                From
+              </label>
+              <Input
+                id="report-from"
+                type="date"
+                className="w-40"
+                value={from}
+                onChange={(e) => {
+                  setRange("custom");
+                  setDates([e.target.value, to]);
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="report-to" className="text-xs font-medium text-muted-foreground">
+                To
+              </label>
+              <Input
+                id="report-to"
+                type="date"
+                className="w-40"
+                value={to}
+                onChange={(e) => {
+                  setRange("custom");
+                  setDates([from, e.target.value]);
+                }}
+              />
+            </div>
+            {canSeeOthers && (
+              <div className="space-y-1">
+                <label htmlFor="report-owner" className="text-xs font-medium text-muted-foreground">
+                  Whose numbers
+                </label>
+                <select
+                  id="report-owner"
+                  className={cn(selectClass, "block")}
+                  value={owner}
+                  onChange={(e) => setOwner(e.target.value)}
+                >
+                  <option value="me">Mine</option>
+                  <option value="all">Everyone</option>
+                  {(users ?? [])
+                    .filter((u) => u.id !== me?.user.id)
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex gap-1 border-b bg-background px-6" role="tablist" aria-label="Report">
@@ -614,7 +622,9 @@ export function ReportsPage() {
       </div>
 
       <div className="p-6">
-        {from > to ? (
+        {tab === "custom" ? (
+          <SavedReports />
+        ) : from > to ? (
           <p className="text-sm text-destructive">The start date is after the end date.</p>
         ) : report.error ? (
           <p className="text-sm text-destructive">{report.error.message}</p>

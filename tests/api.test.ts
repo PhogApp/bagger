@@ -1527,6 +1527,144 @@ describe("standard reports", () => {
   });
 });
 
+describe("the report builder", () => {
+  let boss: Ctx;
+  let mgr: Ctx;
+  let seller: Ctx;
+  let seller2: Ctx;
+  let watcher: Ctx;
+  type Result = { columns: { key: string; label: string }[]; rows: unknown[][]; total: number; truncated: boolean };
+  const run = async (who: Ctx, definition: object, extra: object = {}) =>
+    as(who).post("/api/reports/run", { definition, ...extra });
+  const rows = async (definition: object, who = boss): Promise<Result> => {
+    const res = await run(who, definition);
+    if (res.status !== 200) throw new Error(JSON.stringify(res.body));
+    return res.body;
+  };
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { waitDayMode: "calendar" });
+    mgr = await addMember(db, boss.orgId, "manager", "Mo Manager");
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    seller2 = await addMember(db, boss.orgId, "rep", "Sue Seller");
+    watcher = await addMember(db, boss.orgId, "read_only", "Wes Watcher");
+    await as(boss).post("/api/fields", { object: "leads", label: "Current ERP", type: "picklist", options: ["QuickBooks", "Sage", "Xero"] });
+    await as(boss).post("/api/fields", { object: "leads", label: "Locations", type: "number" });
+    await as(boss).post("/api/fields", { object: "leads", label: "Modules", type: "multipicklist", options: ["GL", "AP", "AR"] });
+    const lead = (who: Ctx, first: string, custom: object, extra: object = {}) =>
+      as(who).post("/api/leads", { firstName: first, lastName: "Builder", email: `${first}@builder.example`, company: `${first} Co`, custom, ...extra });
+    await lead(seller, "ann", { currentErp: "QuickBooks", locations: 3, modules: ["GL"] });
+    await lead(seller, "bob", { currentErp: "Sage", locations: 12, modules: ["AP", "AR"] }, { status: "Prospecting" });
+    await lead(seller2, "cat", { currentErp: "QuickBooks", locations: 40 });
+    const converted = (await lead(seller2, "dan", { currentErp: "Xero" })).body;
+    const account = (await as(seller).post("/api/accounts", { name: "Builder Co" })).body;
+    await as(seller2).post(`/api/leads/${converted.id}/convert`, { accountId: account.id });
+    const opp = (who: Ctx, name: string, amount: number, status: string, closeDate: string) =>
+      as(who).post("/api/opportunities", { name, accountId: account.id, amount, status, closeDate });
+    await opp(seller, "O1", 1000, "Proposal", "2026-11-05");
+    await opp(seller, "O2", 3000, "Proposal", "2026-11-20");
+    await opp(seller2, "O3", 500, "Prospecting", "2026-12-01");
+    await opp(seller2, "O4", 2500, "Closed Won", "2026-12-15");
+  });
+
+  it("lists matching records with the chosen columns, leaving out converted leads", async () => {
+    const r = await rows({ object: "leads", columns: ["name", "company", "custom.currentErp", "custom.modules", "ownerId"], sort: { column: "name", dir: "asc" } });
+    expect(r.columns.map((c) => c.label)).toEqual(["Name", "Company", "Current ERP", "Modules", "Owner"]);
+    expect(r.rows).toEqual([
+      ["ann Builder", "ann Co", "QuickBooks", "GL", "Sal Seller"],
+      ["bob Builder", "bob Co", "Sage", "AP; AR", "Sal Seller"],
+      ["cat Builder", "cat Co", "QuickBooks", null, "Sue Seller"],
+    ]);
+    expect(r.total).toBe(3);
+    const withConverted = await rows({ object: "leads", columns: ["name"], filters: [{ field: "converted", op: "isTrue" }] });
+    expect(withConverted.rows).toEqual([["dan Builder"]]);
+  });
+
+  it("keeps columns apart when two fields share a name", async () => {
+    const r = await rows({ object: "opportunities", columns: ["name", "account", "amount"], sort: { column: "name", dir: "asc" } });
+    expect(r.rows[0]).toEqual(["O1", "Builder Co", "1000.00"]);
+  });
+
+  it("filters on every kind of field", async () => {
+    const names = async (filters: object[]) =>
+      (await rows({ object: "leads", columns: ["firstName"], filters, sort: { column: "firstName", dir: "asc" } })).rows.map((r) => r[0]);
+    expect(await names([{ field: "custom.currentErp", op: "in", value: ["QuickBooks"] }])).toEqual(["ann", "cat"]);
+    expect(await names([{ field: "custom.locations", op: "gte", value: "12" }])).toEqual(["bob", "cat"]);
+    expect(await names([{ field: "custom.modules", op: "includesAny", value: ["AR", "GL"] }])).toEqual(["ann", "bob"]);
+    expect(await names([{ field: "custom.modules", op: "empty" }])).toEqual(["cat"]);
+    expect(await names([{ field: "status", op: "notIn", value: ["New"] }])).toEqual(["bob"]);
+    expect(await names([{ field: "company", op: "contains", value: "AN" }])).toEqual(["ann"]);
+    expect(await names([{ field: "createdAt", op: "within", value: "thisMonth" }])).toEqual(["ann", "bob", "cat"]);
+    expect(await names([{ field: "createdAt", op: "within", value: "lastYear" }])).toEqual([]);
+    expect(await names([{ field: "ownerId", op: "in", value: [seller2.userId] }])).toEqual(["cat"]);
+    expect(await names([{ field: "company", op: "contains", value: "'; drop table leads; --" }])).toEqual([]);
+    // "me" is whoever runs it.
+    const mine = await rows({ object: "leads", columns: ["firstName"], filters: [{ field: "ownerId", op: "in", value: ["me"] }] }, seller);
+    expect(mine.total).toBe(2);
+  });
+
+  it("groups and totals", async () => {
+    const byStage = await rows({
+      object: "opportunities",
+      groupBy: [{ field: "status" }],
+      measures: [{ fn: "count" }, { fn: "sum", field: "amount" }, { fn: "avg", field: "amount" }],
+    });
+    expect(byStage.columns.map((c) => c.label)).toEqual(["Stage", "Record Count", "Sum of Amount", "Average of Amount"]);
+    expect(byStage.rows.map((r) => [r[0], r[1], Number(r[2]), Number(r[3])])).toEqual([
+      ["Closed Won", 1, 2500, 2500],
+      ["Proposal", 2, 4000, 2000],
+      ["Prospecting", 1, 500, 500],
+    ]);
+    const byMonthAndRep = await rows({
+      object: "opportunities",
+      groupBy: [{ field: "closeDate", by: "month" }, { field: "ownerId" }],
+      measures: [{ fn: "sum", field: "amount" }],
+    });
+    expect(byMonthAndRep.rows.map((r) => [r[0], r[1], Number(r[2])])).toEqual([
+      ["2026-11", "Sal Seller", 4000],
+      ["2026-12", "Sue Seller", 3000],
+    ]);
+    const outcome = await rows({ object: "opportunities", groupBy: [{ field: "outcome" }], sort: { column: "count", dir: "desc" } });
+    expect(outcome.rows).toEqual([["Open", 3], ["Won", 1]]);
+    const erp = await rows({ object: "leads", groupBy: [{ field: "custom.currentErp" }], measures: [{ fn: "sum", field: "custom.locations" }] });
+    expect(erp.rows.map((r) => [r[0], Number(r[1])])).toEqual([["QuickBooks", 43], ["Sage", 12]]);
+  });
+
+  it("refuses fields and filters it doesn't know", async () => {
+    expect((await run(boss, { object: "leads", columns: ["password"] })).status).toBe(400);
+    expect((await run(boss, { object: "leads", groupBy: [{ field: "status" }], measures: [{ fn: "sum", field: "company" }] })).status).toBe(400);
+    expect((await run(boss, { object: "leads", filters: [{ field: "company", op: "contains" }] })).status).toBe(400);
+    expect((await run(boss, { object: "users" })).status).toBe(400);
+    const fields = (await as(watcher).get("/api/reports/fields")).body.fields;
+    expect(fields.leads.map((f: { key: string }) => f.key)).toContain("custom.currentErp");
+    expect(fields.opportunities.find((f: { key: string }) => f.key === "status").options).toContain("Closed Won");
+  });
+
+  it("saves reports privately or shared, and guards who may change them", async () => {
+    const definition = { object: "opportunities", groupBy: [{ field: "status" }] };
+    expect((await as(watcher).post("/api/reports/saved", { name: "Nope", definition })).status).toBe(403);
+    const mineOnly = (await as(seller).post("/api/reports/saved", { name: "My pipeline", definition })).body;
+    const shared = (await as(seller).post("/api/reports/saved", { name: "Team pipeline", definition, shared: true })).body;
+    expect((await as(seller2).get(`/api/reports/saved/${mineOnly.id}`)).status).toBe(404);
+    const seen = (await as(seller2).get("/api/reports/saved")).body.map((r: { name: string }) => r.name);
+    expect(seen).toEqual(["Team pipeline"]);
+    expect((await as(seller2).get(`/api/reports/saved/${shared.id}`)).body).toMatchObject({ name: "Team pipeline", canEdit: false });
+    expect((await as(seller2).patch(`/api/reports/saved/${shared.id}`, { name: "Mine now" })).status).toBe(403);
+    expect((await as(mgr).patch(`/api/reports/saved/${shared.id}`, { name: "Team pipeline (Q4)" })).status).toBe(204);
+    expect((await as(seller).patch(`/api/reports/saved/${mineOnly.id}`, { definition: { object: "nope" } })).status).toBe(400);
+    expect((await as(seller).del(`/api/reports/saved/${mineOnly.id}`)).status).toBe(204);
+    expect((await as(seller).get("/api/reports/saved")).body.map((r: { name: string }) => r.name)).toEqual(["Team pipeline (Q4)"]);
+    expect((await as(outsider).get(`/api/reports/saved/${shared.id}`)).status).toBe(404);
+  });
+
+  it("downloads every row only for roles allowed to export", async () => {
+    const definition = { object: "leads", columns: ["name"] };
+    expect((await run(seller, definition, { export: true })).status).toBe(403);
+    expect((await run(mgr, definition, { export: true })).status).toBe(200);
+    expect((await run(watcher, definition)).status).toBe(200);
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;
