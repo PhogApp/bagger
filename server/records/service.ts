@@ -1,6 +1,6 @@
-import { and, asc, eq, ilike, isNull, or, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn, PgTableWithColumns } from "drizzle-orm/pg-core";
-import type { z } from "zod";
+import { z } from "zod";
 import {
   diffFields,
   recordLifecycle,
@@ -13,12 +13,13 @@ import {
   canCreate,
   PermissionError,
   requireRecord,
+  requireTool,
   scopeFor,
   type ObjectName,
 } from "../auth/permissions";
 import type { Db } from "../db/types";
 import type { CustomFieldObject, StatusObject } from "../../shared/schema";
-import { settleCustom } from "../fields/service";
+import { loadDefs, settleCustom } from "../fields/service";
 import { defaultStatus, resolveStatus } from "../statuses/service";
 import { DuplicateError, NotFoundError, ValidationError, type DuplicateMatch } from "../errors";
 
@@ -48,6 +49,8 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   input: TSchema;
   /** Columns a list can be narrowed by with an exact value, e.g. `accountId`. */
   filters?: Record<string, AnyPgColumn>;
+  /** What a list can be sorted by, by the name the screens use. */
+  sortable?: Record<string, AnyPgColumn | SQL>;
   /** Text columns matched by the `q` search parameter. */
   search: AnyPgColumn[];
   orderBy: AnyPgColumn[];
@@ -68,6 +71,12 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   afterDelete?: (tx: Db, actor: Actor, row: TRow) => Promise<void>;
 }
 
+const bulkInput = z.object({
+  ids: z.array(z.uuid()).min(1).max(1000),
+  action: z.enum(["update", "delete"]),
+  patch: z.object({ ownerId: z.uuid().optional(), status: z.string().min(1).optional() }).optional(),
+});
+
 export interface CreateOptions {
   source?: HistorySource;
   /** The user has seen the possible duplicates and wants the record anyway. */
@@ -76,6 +85,13 @@ export interface CreateOptions {
 
 export interface ListOptions {
   q?: string;
+  /** A name from the config's `sortable`, or "custom.<key>". */
+  sort?: string;
+  dir?: "asc" | "desc";
+  /** Only records owned by these users. */
+  owners?: string[];
+  /** Only records with one of these statuses. */
+  statuses?: string[];
   /** Exact matches on the columns named in the config's `filters`, e.g. { accountId }. */
   where?: Record<string, string | undefined>;
   limit?: number;
@@ -120,8 +136,32 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
     }
   }
 
+  /** ORDER BY for a list: the chosen column (custom fields included), then the usual order. */
+  async function sortOrder(db: Db, actor: Actor, options: ListOptions): Promise<SQL[]> {
+    const usual = cfg.orderBy.map((c) => asc(c));
+    if (!options.sort) return usual;
+    const by = options.dir === "desc" ? desc : asc;
+    let expr: AnyPgColumn | SQL | undefined = cfg.sortable?.[options.sort];
+    if (!expr && options.sort.startsWith("custom.") && cfg.customObject) {
+      const key = options.sort.slice(7);
+      const def = (await loadDefs(db, actor.orgId, cfg.customObject)).find((d) => d.key === key);
+      if (def) {
+        const text = sql`(${t.custom} ->> ${key}::text)`;
+        expr =
+          def.type === "number" || def.type === "currency"
+            ? sql`(${text})::numeric`
+            : def.type === "date"
+              ? sql`(${text})::date`
+              : sql`lower(${text})`;
+      }
+    }
+    if (!expr) throw new ValidationError(`${cfg.object} can't be sorted by "${options.sort}"`);
+    return [sql`${by(expr as AnyPgColumn)} nulls last`, ...usual];
+  }
+
   return {
-    async list(db: Db, actor: Actor, options: ListOptions = {}): Promise<TRow[]> {
+    /** The conditions a list or a count applies, shared so the two always agree. */
+    listWhere(actor: Actor, options: ListOptions): SQL {
       const scope = scopeFor(actor.permissions, cfg.object, "view");
       if (scope === "none") throw new PermissionError(`${cfg.object}.view`);
       const where = [inOrg(actor)];
@@ -133,19 +173,74 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         if (!column) throw new ValidationError(`${cfg.object} cannot be listed by ${name}`);
         where.push(eq(column, value));
       }
+      if (options.owners?.length) where.push(inArray(t.ownerId, options.owners));
+      if (options.statuses?.length) {
+        if (!cfg.statusObject) throw new ValidationError(`${cfg.object} have no status`);
+        where.push(inArray(t.status, options.statuses));
+      }
       const q = options.q?.trim();
       if (q && cfg.search.length > 0) {
         const pattern = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
         where.push(or(...cfg.search.map((col) => ilike(col, pattern)))!);
       }
+      return and(...where)!;
+    },
+
+    async list(db: Db, actor: Actor, options: ListOptions = {}): Promise<TRow[]> {
+      const where = this.listWhere(actor, options);
+      const order = await sortOrder(db, actor, options);
       const rows = await db
         .select()
         .from(t)
-        .where(and(...where))
-        .orderBy(...cfg.orderBy.map((c) => asc(c)))
+        .where(where)
+        .orderBy(...order)
         .limit(Math.min(options.limit ?? 100, 500))
         .offset(options.offset ?? 0);
       return rows as TRow[];
+    },
+
+    /**
+     * Change or delete many records at once. Each record is checked and saved
+     * on its own, with its own history, so one refusal doesn't stop the rest;
+     * the refusals come back with their reasons.
+     */
+    async bulk(
+      db: Db,
+      actor: Actor,
+      raw: unknown,
+    ): Promise<{ done: number; skipped: { id: string; reason: string }[] }> {
+      const input = bulkInput.parse(raw);
+      if (input.action === "delete") requireTool(actor.permissions, "data.bulk_delete");
+      else {
+        requireTool(actor.permissions, "data.bulk_edit");
+        if (input.patch?.ownerId) requireTool(actor.permissions, "data.bulk_reassign");
+        if (!input.patch || Object.keys(input.patch).length === 0) {
+          throw new ValidationError("Choose what to change");
+        }
+      }
+      let done = 0;
+      const skipped: { id: string; reason: string }[] = [];
+      for (const id of new Set(input.ids)) {
+        try {
+          if (input.action === "delete") await this.remove(db, actor, id);
+          else await this.update(db, actor, id, input.patch);
+          done += 1;
+        } catch (e) {
+          if (e instanceof PermissionError) skipped.push({ id, reason: "Your role can't change this record" });
+          else if (e instanceof NotFoundError) skipped.push({ id, reason: "No longer exists" });
+          else if (e instanceof ValidationError) skipped.push({ id, reason: e.message });
+          else throw e;
+        }
+      }
+      return { done, skipped };
+    },
+
+    async count(db: Db, actor: Actor, options: ListOptions = {}): Promise<number> {
+      const [row] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(t)
+        .where(this.listWhere(actor, options));
+      return row.n;
     },
 
     async get(db: Db, actor: Actor, id: string): Promise<TRow> {

@@ -129,13 +129,30 @@ export function OpportunitiesPage() {
   const fields = useOpportunityFields();
 
   const columns: Column<Opportunity>[] = [
-    { header: "Opportunity", cell: (o) => <span className="font-medium">{o.name}</span> },
-    { header: "Account", cell: (o) => accountName(o.accountId) },
-    { header: "Amount", cell: (o) => (o.amount === null ? "—" : formatMoney(Number(o.amount))) },
-    { header: "Expected Close", cell: (o) => (o.closeDate ? formatDay(o.closeDate) : "—") },
-    { header: "Owner", cell: (o) => nameOf(users, o.ownerId) },
+    {
+      header: "Opportunity",
+      sort: "name",
+      csv: (o) => o.name,
+      cell: (o) => <span className="font-medium">{o.name}</span>,
+    },
+    { header: "Account", sort: "account", cell: (o) => accountName(o.accountId) },
+    {
+      header: "Amount",
+      sort: "amount",
+      csv: (o) => (o.amount === null ? null : Number(o.amount)),
+      cell: (o) => (o.amount === null ? "—" : formatMoney(Number(o.amount))),
+    },
+    {
+      header: "Expected Close",
+      sort: "closeDate",
+      csv: (o) => o.closeDate,
+      cell: (o) => (o.closeDate ? formatDay(o.closeDate) : "—"),
+    },
+    { header: "Owner", sort: "owner", cell: (o) => nameOf(users, o.ownerId) },
     {
       header: "Stage",
+      sort: "status",
+      csv: (o) => o.status,
       cell: (o) => (
         <StatusBadge status={o.status} color={statusColor(statuses, "opportunities", o.status)} />
       ),
@@ -307,6 +324,11 @@ export function OpportunitiesPage() {
       headerActions={toggle}
       renderList={view === "board" ? board : undefined}
       detailPath={(id) => `/opportunities/${id}`}
+      listTools={{
+        statusObject: "opportunities",
+        customObject: "opportunities",
+        statusLabel: "Stage",
+      }}
       describe={(o) => o.name}
     />
   );

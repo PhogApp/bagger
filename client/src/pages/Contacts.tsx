@@ -7,7 +7,7 @@ import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useApi, useMe, useOrgUsers, useStatuses } from "@/lib/api";
-import { formatPhone } from "@/lib/utils";
+import { formatDate, formatPhone } from "@/lib/utils";
 import type { Account } from "./Accounts";
 import {
   confirmStatusChange,
@@ -102,17 +102,40 @@ export function ContactsPage() {
   const columns: Column<Contact>[] = [
     {
       header: "Name",
+      sort: "name",
+      csv: (c) => `${c.firstName} ${c.lastName}`,
       cell: (c) => <span className="font-medium">{`${c.firstName} ${c.lastName}`}</span>,
     },
-    { header: "Title", cell: (c) => c.title ?? "—" },
-    { header: "Account", cell: (c) => accountName(c.accountId) },
+    { header: "Title", sort: "title", cell: (c) => c.title ?? "—" },
+    { header: "Account", sort: "account", cell: (c) => accountName(c.accountId) },
     { header: "Phone", cell: (c) => formatPhone(c.cellPhone ?? c.directPhone ?? c.hqPhone) },
-    { header: "Owner", cell: (c) => nameOf(users, c.ownerId) },
+    { header: "Owner", sort: "owner", cell: (c) => nameOf(users, c.ownerId) },
     {
       header: "Status",
+      sort: "status",
+      csv: (c) => c.status,
       cell: (c) => (
         <StatusBadge status={c.status} color={statusColor(statuses, "contacts", c.status)} />
       ),
+    },
+
+    {
+      header: "Email",
+      sort: "email",
+      hidden: true,
+      cell: (c) => c.email,
+    },
+    {
+      header: "Created",
+      sort: "createdAt",
+      hidden: true,
+      cell: (c) => formatDate(c.createdAt as string),
+    },
+    {
+      header: "Last Modified",
+      sort: "updatedAt",
+      hidden: true,
+      cell: (c) => formatDate(c.updatedAt as string),
     },
   ];
 
@@ -128,6 +151,7 @@ export function ContactsPage() {
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "contacts"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/contacts/${id}`}
+      listTools={{ statusObject: "contacts", customObject: "contacts" }}
       headerActions={
         canUse(me, "data.import") && permissionsFor(me, "contacts").canCreate ? (
           <ImportButton kind="contacts" />

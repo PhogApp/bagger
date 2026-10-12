@@ -1665,6 +1665,91 @@ describe("the report builder", () => {
   });
 });
 
+describe("list paging, sorting, filters and bulk changes", () => {
+  let boss: Ctx;
+  let mgr: Ctx;
+  let seller: Ctx;
+  let seller2: Ctx;
+  const names = (rows: { firstName: string }[]) => rows.map((r) => r.firstName);
+
+  beforeAll(async () => {
+    boss = await createOrg(db);
+    mgr = await addMember(db, boss.orgId, "manager", "Mo Manager");
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    seller2 = await addMember(db, boss.orgId, "rep", "Sue Seller");
+    await as(boss).post("/api/fields", { object: "leads", label: "Locations", type: "number" });
+    const rows = ["Ava", "Ben", "Cal", "Dee", "Eli", "Fay", "Gus"].map((n, i) => ({
+      firstName: n,
+      lastName: `L${i}`,
+      email: `${n.toLowerCase()}@lists.example`,
+      "custom.locations": String([5, 40, 3, 12, 100, 7, 9][i]),
+    }));
+    await as(seller).post("/api/import/leads", { rows: rows.slice(0, 4) });
+    await as(seller2).post("/api/import/leads", { rows: rows.slice(4) });
+    const all = (await as(boss).get("/api/leads?q=lists.example")).body;
+    const id = (n: string) => all.find((l: { firstName: string }) => l.firstName === n).id;
+    await as(seller).patch(`/api/leads/${id("Ben")}`, { status: "Prospecting" });
+    await as(seller2).patch(`/api/leads/${id("Fay")}`, { status: "Active" });
+  });
+
+  it("pages through a list with a total", async () => {
+    const page = (await as(boss).get("/api/leads?q=lists.example&withTotal=1&limit=3&offset=3&sort=name")).body;
+    expect(page.total).toBe(7);
+    expect(names(page.rows)).toEqual(["Dee", "Eli", "Fay"]);
+    const plain = (await as(boss).get("/api/leads?q=lists.example&limit=2")).body;
+    expect(Array.isArray(plain)).toBe(true);
+  });
+
+  it("sorts by a column or a custom field, either way", async () => {
+    const byName = (await as(boss).get("/api/leads?q=lists.example&sort=name&dir=desc")).body;
+    expect(names(byName).slice(0, 2)).toEqual(["Gus", "Fay"]);
+    const byLocations = (await as(boss).get("/api/leads?q=lists.example&sort=custom.locations&dir=desc")).body;
+    expect(names(byLocations).slice(0, 3)).toEqual(["Eli", "Ben", "Dee"]); // 100, 40, 12: numbers, not text
+    const byOwner = (await as(boss).get("/api/leads?q=lists.example&sort=owner")).body;
+    expect(byOwner[0].ownerId).toBe(seller.userId);
+    expect((await as(boss).get("/api/leads?sort=password")).status).toBe(400);
+  });
+
+  it("filters by owner and status", async () => {
+    const mine = (await as(seller2).get("/api/leads?q=lists.example&owner=me&withTotal=1")).body;
+    expect(mine.total).toBe(3);
+    const both = (await as(boss).get(`/api/leads?q=lists.example&owner=${seller.userId},${seller2.userId}&withTotal=1`)).body;
+    expect(both.total).toBe(7);
+    const statuses = (await as(boss).get("/api/leads?q=lists.example&status=Prospecting&status=Active&sort=name")).body;
+    expect(names(statuses)).toEqual(["Ben", "Fay"]);
+    const one = (await as(boss).get("/api/leads?q=lists.example&status=Prospecting")).body;
+    expect(names(one)).toEqual(["Ben"]);
+    expect((await as(boss).get("/api/leads?owner=not-a-user")).status).toBe(400);
+  });
+
+  it("changes many at once, record by record, within each role's rights", async () => {
+    const all = (await as(boss).get("/api/leads?q=lists.example&sort=name")).body;
+    const ids = all.map((l: { id: string }) => l.id);
+    const foreign = (await as(outsider).post("/api/leads", { firstName: "X", lastName: "Y", email: "xy@lists-other.example" })).body.id;
+
+    const status = await as(seller).post("/api/leads/bulk", { ids: [...ids.slice(0, 3), foreign], action: "update", patch: { status: "Active" } });
+    expect(status.body).toEqual({ done: 3, skipped: [{ id: foreign, reason: "No longer exists" }] });
+    expect(names((await as(boss).get("/api/leads?q=lists.example&status=Active&sort=name")).body)).toEqual(["Ava", "Ben", "Cal", "Fay"]);
+    const history = (await as(boss).get(`/api/history/lead/${ids[0]}`)).body;
+    expect(history[0]).toMatchObject({ field: "status", newValue: "Active", userId: seller.userId });
+
+    const bad = await as(seller).post("/api/leads/bulk", { ids: ids.slice(0, 2), action: "update", patch: { status: "Nope" } });
+    expect(bad.body.done).toBe(0);
+    expect(bad.body.skipped[0].reason).toMatch(/not one of your/);
+
+    // Reassigning and deleting take more than a rep has.
+    expect((await as(seller).post("/api/leads/bulk", { ids, action: "update", patch: { ownerId: seller.userId } })).status).toBe(403);
+    expect((await as(seller).post("/api/leads/bulk", { ids, action: "delete" })).status).toBe(403);
+    const moved = await as(mgr).post("/api/leads/bulk", { ids: ids.slice(4), action: "update", patch: { ownerId: seller.userId } });
+    expect(moved.body).toEqual({ done: 3, skipped: [] });
+    const gone = await as(mgr).post("/api/leads/bulk", { ids: ids.slice(5), action: "delete" });
+    expect(gone.body.done).toBe(2);
+    expect((await as(boss).get("/api/leads?q=lists.example&withTotal=1")).body.total).toBe(5);
+    expect((await as(mgr).post("/api/leads/bulk", { ids: [], action: "delete" })).status).toBe(400);
+    expect((await as(mgr).post("/api/leads/bulk", { ids, action: "update", patch: {} })).status).toBe(400);
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;

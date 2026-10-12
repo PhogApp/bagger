@@ -44,16 +44,29 @@ export function AccountsPage() {
   const fields = useAccountFields();
 
   const columns: Column<Account>[] = [
-    { header: "Name", cell: (a) => <span className="font-medium">{a.name}</span> },
-    { header: "Website", cell: (a) => a.website ?? "—" },
-    { header: "Owner", cell: (a) => nameOf(users, a.ownerId) },
+    {
+      header: "Name",
+      sort: "name",
+      csv: (a) => a.name,
+      cell: (a) => <span className="font-medium">{a.name}</span>,
+    },
+    { header: "Website", sort: "website", cell: (a) => a.website ?? "—" },
+    { header: "Owner", sort: "owner", cell: (a) => nameOf(users, a.ownerId) },
     {
       header: "Status",
+      sort: "status",
+      csv: (a) => a.status,
       cell: (a) => (
         <StatusBadge status={a.status} color={statusColor(statuses, "accounts", a.status)} />
       ),
     },
-    { header: "Created", cell: (a) => formatDate(a.createdAt) },
+    { header: "Created", sort: "createdAt", cell: (a) => formatDate(a.createdAt) },
+    {
+      header: "Last Modified",
+      sort: "updatedAt",
+      hidden: true,
+      cell: (a) => formatDate(a.updatedAt as string),
+    },
   ];
 
   return (
@@ -68,6 +81,7 @@ export function AccountsPage() {
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "accounts"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/accounts/${id}`}
+      listTools={{ statusObject: "accounts", customObject: "accounts" }}
       headerActions={
         canUse(me, "data.import") && permissionsFor(me, "accounts").canCreate ? (
           <ImportButton kind="accounts" />
