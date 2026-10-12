@@ -29,6 +29,7 @@ import * as organization from "../orgs/organization";
 import * as activityService from "../activities/service";
 import * as dashboard from "../dashboard/service";
 import * as fields from "../fields/service";
+import * as builder from "../reports/builder";
 import * as reports from "../reports/standard";
 import * as settings from "../settings/service";
 import * as statuses from "../statuses/service";
@@ -340,6 +341,36 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     await activityService.deleteActivity(db, actorOf(req), id(req));
     res.status(204).end();
   });
+  // ---- the report builder and saved reports
+  api.get("/reports/fields", async (req, res) => {
+    res.json(await builder.reportFields(db, actorOf(req)));
+  });
+  api.post("/reports/run", async (req, res) => {
+    const { definition, export: wantsAll } = z
+      .object({ definition: z.unknown(), export: z.boolean().optional() })
+      .parse(req.body);
+    // Downloading every row is an export; showing the first thousand is not.
+    if (wantsAll) requireTool(actorOf(req).permissions, "data.export_lists");
+    res.json(await builder.runReport(db, actorOf(req), definition, { limit: wantsAll ? 50000 : 1000 }));
+  });
+  api.get("/reports/saved", async (req, res) => {
+    res.json(await builder.listSaved(db, actorOf(req)));
+  });
+  api.post("/reports/saved", async (req, res) => {
+    res.status(201).json(await builder.createSaved(db, actorOf(req), req.body));
+  });
+  api.get("/reports/saved/:id", async (req, res) => {
+    res.json(await builder.getSaved(db, actorOf(req), id(req)));
+  });
+  api.patch("/reports/saved/:id", async (req, res) => {
+    await builder.updateSaved(db, actorOf(req), id(req), req.body);
+    res.status(204).end();
+  });
+  api.delete("/reports/saved/:id", async (req, res) => {
+    await builder.deleteSaved(db, actorOf(req), id(req));
+    res.status(204).end();
+  });
+
   // ---- standard reports
   api.get("/reports/sequences", async (req, res) => {
     res.json(await reports.sequenceReport(db, actorOf(req), req.query));
