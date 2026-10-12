@@ -18,6 +18,7 @@ import { isAdmin, useMe } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { Brand } from "./Brand";
+import { GlobalSearch } from "./GlobalSearch";
 import { RunStepsButton } from "./RunSteps";
 
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
@@ -77,6 +78,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
               />
             </>
           )}
+        </div>
+        <div className="flex flex-1 justify-center px-6">
+          <GlobalSearch />
         </div>
         <RunStepsButton />
       </header>

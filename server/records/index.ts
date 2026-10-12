@@ -215,7 +215,13 @@ export const contactService = recordService<typeof contacts.$inferSelect, typeof
   customObject: "contacts",
   filters: { accountId: contacts.accountId },
   input: contactInput,
-  search: [contacts.firstName, contacts.lastName, contacts.email, contacts.cellPhone],
+  search: [
+    contacts.firstName,
+    contacts.lastName,
+    contacts.email,
+    contacts.cellPhone,
+    sql`(select a.name from accounts a where a.id = ${contacts.accountId})`,
+  ],
   orderBy: [contacts.lastName, contacts.firstName],
   duplicates: (tx, actor, values) => personMatches(tx, actor.orgId, values.email, ["contact"]),
   validate: async (tx, actor, values) => {
@@ -285,7 +291,10 @@ export const opportunityService = recordService<
   customObject: "opportunities",
   filters: { accountId: opportunities.accountId },
   input: opportunityInput,
-  search: [opportunities.name],
+  search: [
+    opportunities.name,
+    sql`(select a.name from accounts a where a.id = ${opportunities.accountId})`,
+  ],
   orderBy: [opportunities.closeDate, opportunities.name],
   validate: async (tx, actor, values) => {
     if (values.accountId) {

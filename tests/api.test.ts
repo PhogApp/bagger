@@ -1424,6 +1424,67 @@ describe("open and completed activities", () => {
   });
 });
 
+describe("searching everything at once", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  let limited: Ctx;
+
+  beforeAll(async () => {
+    boss = await createOrg(db);
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    limited = await addMember(db, boss.orgId, "rep", "Lee Limited");
+    const account = (
+      await as(seller).post("/api/accounts", { name: "Zephyr Freight", website: "zephyrfreight.example" })
+    ).body;
+    await as(seller).post("/api/contacts", {
+      firstName: "Quinn",
+      lastName: "Harbor",
+      email: "quinn@zephyrfreight.example",
+      accountId: account.id,
+    });
+    await as(seller).post("/api/leads", newLead({ firstName: "Quinn", lastName: "Zephyrson", email: "qz@lead.example", company: "Other Co" }));
+    await as(seller).post("/api/opportunities", { name: "Fleet rollout", accountId: account.id, amount: 42000 });
+  });
+
+  it("finds leads, contacts, accounts and opportunities, word by word", async () => {
+    const res = await as(seller).get("/api/search?q=zephyr");
+    expect(res.status).toBe(200);
+    const byObject = Object.fromEntries(
+      res.body.map((g: { object: string; total: number; hits: { title: string; detail: string }[] }) => [g.object, g]),
+    );
+    expect(byObject.leads.hits.map((h: { title: string }) => h.title)).toEqual(["Quinn Zephyrson"]);
+    // A contact and an opportunity are found by their account's name too.
+    expect(byObject.contacts.hits[0]).toMatchObject({ title: "Quinn Harbor", detail: "Zephyr Freight · quinn@zephyrfreight.example" });
+    expect(byObject.accounts.hits[0].title).toBe("Zephyr Freight");
+    expect(byObject.opportunities.hits[0]).toMatchObject({ title: "Fleet rollout" });
+    expect(byObject.opportunities.hits[0].detail).toContain("$42,000");
+
+    // Both words must match: "quinn harbor" finds the contact only.
+    const both = (await as(seller).get("/api/search?q=quinn%20harbor")).body;
+    expect(both.find((g: { object: string }) => g.object === "contacts").total).toBe(1);
+    expect(both.find((g: { object: string }) => g.object === "leads").total).toBe(0);
+    // The lists search the same way.
+    expect((await as(seller).get("/api/contacts?q=zephyr%20quinn")).body).toHaveLength(1);
+
+    expect((await as(seller).get("/api/search?q=z")).body).toEqual([]);
+    const theirs = (await as(outsider).get("/api/search?q=zephyr")).body;
+    expect(theirs.every((g: { total: number }) => g.total === 0)).toBe(true);
+  });
+
+  it("leaves out record types the person's role can't see", async () => {
+    const [role] = await db
+      .insert(s.roles)
+      .values({ orgId: boss.orgId, name: "Leads only", permissions: { "leads.view": "all" } })
+      .returning();
+    await db
+      .update(s.memberships)
+      .set({ roleId: role.id })
+      .where(eq(s.memberships.userId, limited.userId));
+    const res = (await as(limited).get("/api/search?q=zephyr")).body;
+    expect(res.map((g: { object: string }) => g.object)).toEqual(["leads"]);
+  });
+});
+
 describe("custom fields and record layouts", () => {
   let boss: Ctx;
   let seller: Ctx;

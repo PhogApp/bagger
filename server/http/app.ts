@@ -28,6 +28,7 @@ import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
 import * as activityService from "../activities/service";
+import { globalSearch } from "../search/service";
 import * as dashboard from "../dashboard/service";
 import * as fields from "../fields/service";
 import * as builder from "../reports/builder";
@@ -346,6 +347,11 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   });
   api.put("/tasks/:id/message", async (req, res) => {
     res.json(await seq.editMessage(db, actorOf(req), id(req), req.body));
+  });
+
+  // ---- the search box at the top of every page
+  api.get("/search", async (req, res) => {
+    res.json(await globalSearch(db, actorOf(req), req.query));
   });
 
   // ---- activities and the dashboard
