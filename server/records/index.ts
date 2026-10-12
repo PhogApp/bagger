@@ -1,11 +1,13 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   accounts,
   contacts,
+  enrollments,
   leads,
   opportunities,
   opportunityStageHistory,
+  sequenceSteps,
   sequences,
   templateTypeEnum,
   templates,
@@ -366,8 +368,35 @@ export const templateService = recordService<typeof templates.$inferSelect, type
   object: "templates",
   recordType: "template",
   input: templateInput,
+  sortable: {
+    name: sql`lower(${templates.name})`,
+    subject: sql`lower(${templates.subject})`,
+    type: templates.type,
+    owner: sql`(select u.name from users u where u.id = ${templates.ownerId})`,
+    createdAt: templates.createdAt,
+    updatedAt: templates.updatedAt,
+  },
   search: [templates.name, templates.subject, templates.body],
   orderBy: [templates.name],
+  // A step that uses a deleted template would have nothing to send.
+  afterDelete: async (tx, _actor, row) => {
+    const [use] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(sequenceSteps)
+      .innerJoin(sequences, eq(sequenceSteps.sequenceId, sequences.id))
+      .where(
+        and(
+          eq(sequenceSteps.templateId, row.id),
+          isNull(sequenceSteps.deletedAt),
+          isNull(sequences.deletedAt),
+        ),
+      );
+    if (use.n > 0) {
+      throw new ValidationError(
+        `This template is used by ${use.n} sequence step${use.n === 1 ? "" : "s"}. Change ${use.n === 1 ? "that step" : "those steps"} first.`,
+      );
+    }
+  },
 });
 
 export const sequenceService = recordService<typeof sequences.$inferSelect, typeof sequenceInput>({
@@ -375,6 +404,27 @@ export const sequenceService = recordService<typeof sequences.$inferSelect, type
   object: "sequences",
   recordType: "sequence",
   input: sequenceInput,
-  search: [sequences.name],
+  sortable: {
+    name: sql`lower(${sequences.name})`,
+    isActive: sequences.isActive,
+    owner: sql`(select u.name from users u where u.id = ${sequences.ownerId})`,
+    createdAt: sequences.createdAt,
+    updatedAt: sequences.updatedAt,
+  },
+  search: [sequences.name, sequences.description],
   orderBy: [sequences.name],
+  // People still working through it would be left with steps nobody can see.
+  afterDelete: async (tx, _actor, row) => {
+    const [running] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(enrollments)
+      .where(
+        and(eq(enrollments.sequenceId, row.id), inArray(enrollments.state, ["active", "paused"])),
+      );
+    if (running.n > 0) {
+      throw new ValidationError(
+        `${running.n} ${running.n === 1 ? "person is" : "people are"} still in this sequence. Remove them or let them finish first.`,
+      );
+    }
+  },
 });

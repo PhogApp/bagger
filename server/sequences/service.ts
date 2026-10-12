@@ -119,6 +119,33 @@ export async function sequenceStats(db: Db, actor: Actor) {
   return stats;
 }
 
+/** The sequence steps that send a template, so its page can say where it is used. */
+export async function templateUsage(db: Db, actor: Actor, templateId: string) {
+  if (scopeFor(actor.permissions, "templates", "view") === "none") {
+    throw new PermissionError("templates.view");
+  }
+  return db
+    .select({
+      sequenceId: sequences.id,
+      sequenceName: sequences.name,
+      isActive: sequences.isActive,
+      stepId: sequenceSteps.id,
+      stepTitle: sequenceSteps.title,
+      position: sequenceSteps.position,
+    })
+    .from(sequenceSteps)
+    .innerJoin(sequences, eq(sequenceSteps.sequenceId, sequences.id))
+    .where(
+      and(
+        eq(sequenceSteps.templateId, templateId),
+        eq(sequences.orgId, actor.orgId),
+        isNull(sequenceSteps.deletedAt),
+        isNull(sequences.deletedAt),
+      ),
+    )
+    .orderBy(asc(sequences.name), asc(sequenceSteps.position));
+}
+
 // --------------------------------------------------------------- steps
 
 export async function listSteps(db: Db, actor: Actor, sequenceId: string): Promise<Step[]> {

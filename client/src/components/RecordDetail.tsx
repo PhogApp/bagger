@@ -21,7 +21,7 @@ import { cn, formatDay, formatPhone } from "@/lib/utils";
 type Row = { id: string; ownerId: string } & Record<string, unknown>;
 
 export interface RecordDetailProps<T extends Row> {
-  object: "leads" | "contacts" | "accounts" | "opportunities";
+  object: "leads" | "contacts" | "accounts" | "opportunities" | "templates" | "sequences";
   recordType: string;
   id: string;
   listHref: string;
@@ -36,7 +36,14 @@ export interface RecordDetailProps<T extends Row> {
   actions?: (row: T) => ReactNode;
   /** Under the fields, e.g. an account's contacts and opportunities. */
   below?: (row: T) => ReactNode;
-  activity: (row: T) => ActivityAbout;
+  /** The record's Activity tab. Without it, the right column shows History only. */
+  activity?: (row: T) => ActivityAbout;
+  /**
+   * "split" (the default): fields and `below` on the left, Activity and History
+   * on the right. "wide": everything full width, for records whose `below`
+   * needs the room (a sequence's steps); `below` then shows History itself.
+   */
+  layout?: "split" | "wide";
   /** Where to send someone who opens this record instead, e.g. a converted lead's contact. */
   redirect?: (row: T) => string | null;
   /** When set, the record can't be changed and this says why. */
@@ -266,6 +273,7 @@ function InlineField<T extends Row>(props: {
               onKeyDown={onKey}
             />
           )}
+          {field.help && <p className="text-xs text-muted-foreground">{field.help}</p>}
           {asking && (
             <div
               role="alert"
@@ -447,7 +455,12 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
         )}
       </div>
 
-      <div className="grid gap-6 p-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div
+        className={cn(
+          "grid gap-6 p-6",
+          props.layout !== "wide" && "xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]",
+        )}
+      >
         <div className="space-y-6">
           <section className="rounded-lg border bg-background p-5">
             <div className="mb-3 flex items-center justify-between">
@@ -500,22 +513,31 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
           {props.below?.(row)}
         </div>
 
-        <section className="rounded-lg border bg-background p-5">
-          <Tabs defaultValue="activity">
-            <TabsList>
-              <TabsTrigger value="activity">Activity</TabsTrigger>
-              {can.canViewHistory && <TabsTrigger value="history">History</TabsTrigger>}
-            </TabsList>
-            <TabsContent value="activity">
-              <ActivityTimeline about={props.activity(row)} />
-            </TabsContent>
-            {can.canViewHistory && (
-              <TabsContent value="history">
-                <History recordType={props.recordType} recordId={row.id} fields={props.fields} />
+        {props.layout === "wide" ? null : props.activity ? (
+          <section className="rounded-lg border bg-background p-5">
+            <Tabs defaultValue="activity">
+              <TabsList>
+                <TabsTrigger value="activity">Activity</TabsTrigger>
+                {can.canViewHistory && <TabsTrigger value="history">History</TabsTrigger>}
+              </TabsList>
+              <TabsContent value="activity">
+                <ActivityTimeline about={props.activity(row)} />
               </TabsContent>
-            )}
-          </Tabs>
-        </section>
+              {can.canViewHistory && (
+                <TabsContent value="history">
+                  <History recordType={props.recordType} recordId={row.id} fields={props.fields} />
+                </TabsContent>
+              )}
+            </Tabs>
+          </section>
+        ) : (
+          can.canViewHistory && (
+            <section className="self-start rounded-lg border bg-background p-5">
+              <h2 className="text-sm font-semibold">History</h2>
+              <History recordType={props.recordType} recordId={row.id} fields={props.fields} />
+            </section>
+          )
+        )}
       </div>
     </div>
   );

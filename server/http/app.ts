@@ -263,6 +263,9 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   });
 
   // Registered before the generic /sequences/:id route so "stats" is not read as an id.
+  api.get("/templates/:id/usage", async (req, res) => {
+    res.json(await seq.templateUsage(db, actorOf(req), id(req)));
+  });
   api.get("/sequences/stats", async (req, res) => {
     res.json(await seq.sequenceStats(db, actorOf(req)));
   });
