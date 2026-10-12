@@ -382,7 +382,9 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   const { data: me } = useMe();
   const can = permissionsFor(me, object);
 
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(
+    () => new URLSearchParams(window.location.search).get("q") ?? "",
+  );
   const q = useDebounced(search.trim(), 250);
   const [editing, setEditing] = useState<T | "new" | null>(null);
   const [values, setValues] = useState<Values>({});
@@ -564,6 +566,15 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   const [path, navigate] = useLocation();
   const params = new URLSearchParams(useSearch());
   const linkedId = params.get("open");
+  // /leads?q=jill (from the search box's "See all") starts the list searched.
+  const linkedQ = params.get("q");
+  useEffect(() => {
+    if (linkedQ === null) return;
+    setSearch(linkedQ);
+    navigate(path, { replace: true });
+    // Only the address should trigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedQ]);
   const startNew = params.get("new") === "1" ? params.toString() : null;
   useEffect(() => {
     if (!startNew) return;

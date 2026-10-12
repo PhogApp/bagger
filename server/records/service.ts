@@ -51,8 +51,8 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   filters?: Record<string, AnyPgColumn>;
   /** What a list can be sorted by, by the name the screens use. */
   sortable?: Record<string, AnyPgColumn | SQL>;
-  /** Text columns matched by the `q` search parameter. */
-  search: AnyPgColumn[];
+  /** Text columns (or expressions) matched by the `q` search parameter. */
+  search: (AnyPgColumn | SQL)[];
   orderBy: AnyPgColumn[];
   /** Check references (for example, that an account is in this org). */
   validate?: (tx: Db, actor: Actor, values: Partial<z.infer<TSchema>>) => Promise<void>;
@@ -178,10 +178,13 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         if (!cfg.statusObject) throw new ValidationError(`${cfg.object} have no status`);
         where.push(inArray(t.status, options.statuses));
       }
-      const q = options.q?.trim();
-      if (q && cfg.search.length > 0) {
-        const pattern = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
-        where.push(or(...cfg.search.map((col) => ilike(col, pattern)))!);
+      // Every word must appear in one of the searched columns, so "jill rude" finds Jill Rude.
+      const words = (options.q ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 6);
+      if (cfg.search.length > 0) {
+        for (const word of words) {
+          const pattern = `%${word.replace(/[\\%_]/g, "\\$&")}%`;
+          where.push(or(...cfg.search.map((col) => ilike(col, pattern)))!);
+        }
       }
       return and(...where)!;
     },
