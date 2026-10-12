@@ -77,6 +77,11 @@ export interface RecordPageProps<T extends BaseRecord> {
   defaults?: Record<string, string>;
   /** Heading for the edit dialog. */
   describe: (row: T) => string;
+  /**
+   * The record's own page. When set, a row opens that page, a new record opens
+   * its page once created, and the dialog is only used for adding.
+   */
+  detailPath?: (id: string) => string;
   /** When set, clicking a row calls this instead of opening the edit dialog. */
   onRowOpen?: (row: T) => void;
   /** More tabs in a record's dialog, between Details and History, e.g. Activity. */
@@ -194,7 +199,7 @@ function FieldInput({
   );
 }
 
-function History({
+export function History({
   recordType,
   recordId,
   fields,
@@ -222,7 +227,7 @@ function History({
   };
 
   return (
-    <ol className="max-h-96 space-y-3 overflow-y-auto py-2">
+    <ol className="max-h-[32rem] space-y-3 overflow-y-auto py-2">
       {data.map((h) => (
         <li key={h.id} className="border-l-2 border-border pl-3 text-sm">
           {h.field === "convertedContactId" ? (
@@ -315,7 +320,12 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   const relabel = (message: string) =>
     fields.reduce((text, f) => text.replace(`${f.name}:`, `${f.label}:`), message);
 
-  const openRow = (row: T) => (props.onRowOpen ? props.onRowOpen(row) : open(row));
+  const openRow = (row: T) =>
+    props.detailPath
+      ? navigateTo(props.detailPath(row.id))
+      : props.onRowOpen
+        ? props.onRowOpen(row)
+        : open(row);
 
   // A link such as /contacts?open=<id> lands on the list with that record open;
   // /contacts?new=1&accountId=<id> opens a new one with those fields filled in.
@@ -339,6 +349,10 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   }, [startNew]);
   useEffect(() => {
     if (!linkedId) return;
+    if (props.detailPath) {
+      navigate(props.detailPath(linkedId), { replace: true });
+      return;
+    }
     let cancelled = false;
     api<T>("GET", `/api/${object}/${linkedId}`)
       .then((row) => {
@@ -360,6 +374,8 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
     setEditing(null);
   };
 
+  const [, navigateTo] = useLocation();
+
   const save = useMutation({
     mutationFn: async (allowDuplicate: boolean) => {
       if (editing === "new") {
@@ -374,7 +390,11 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       if (Object.keys(changed).length === 0) return null;
       return api("PATCH", `/api/${object}/${(editing as T).id}`, parsed(changed));
     },
-    onSuccess: done,
+    onSuccess: async (created) => {
+      await done();
+      const id = (created as { id?: string } | null)?.id;
+      if (props.detailPath && editing === "new" && id) navigateTo(props.detailPath(id));
+    },
     onError: (e: Error) => {
       if (e instanceof ApiError && e.code === "duplicate") {
         setDuplicates((e.body.matches as DuplicateMatch[]) ?? []);

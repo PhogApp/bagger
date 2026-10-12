@@ -38,3 +38,24 @@ export const statusColor = (
   object: StatusObject,
   name: string,
 ) => statuses?.find((s) => s.object === object && s.name === name)?.color ?? "neutral";
+
+/**
+ * Before a person's status is changed to one that ends their sequence, say
+ * so and ask. Null when the change has no side effects.
+ */
+export function confirmStatusChange(
+  statuses: StatusOption[] | undefined,
+  object: "leads" | "contacts",
+  field: string,
+  value: string,
+): string | null {
+  if (field !== "status") return null;
+  const effect = statuses?.find((s) => s.object === object && s.name === value)?.effect;
+  if (effect === "do_not_contact") {
+    return `“${value}” ends any sequence this person is in and stops them being enrolled again. Change it?`;
+  }
+  if (effect === "ends_sequence") {
+    return `“${value}” ends any sequence this person is in. Change it?`;
+  }
+  return null;
+}

@@ -32,10 +32,13 @@ export function BulkEnrollButton({
   kind,
   people,
   onDone,
+  standalone = false,
 }: {
   kind: "leads" | "contacts";
   people: Person[];
   onDone: () => void;
+  /** On a record's own page rather than in the list's selection bar. */
+  standalone?: boolean;
 }) {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -77,7 +80,11 @@ export function BulkEnrollButton({
 
   return (
     <>
-      <Button size="sm" onClick={() => setOpen(true)}>
+      <Button
+        size={standalone ? "default" : "sm"}
+        variant={standalone ? "outline" : "default"}
+        onClick={() => setOpen(true)}
+      >
         Enroll in sequence
       </Button>
       {open && (
@@ -85,7 +92,10 @@ export function BulkEnrollButton({
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>
-                Enroll {people.length} {people.length === 1 ? "person" : "people"}
+                Enroll{" "}
+                {people.length === 1
+                  ? `${people[0].firstName} ${people[0].lastName}`
+                  : `${people.length} people`}
               </DialogTitle>
               <DialogDescription>
                 Each person's first step lands in your Run Steps queue. Anyone already in a

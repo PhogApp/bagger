@@ -3,11 +3,11 @@ import { AppLayout } from "./components/AppLayout";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useApi, useMe } from "./lib/api";
-import { AccountsPage } from "./pages/Accounts";
-import { ContactsPage } from "./pages/Contacts";
+import { AccountDetailPage, AccountsPage } from "./pages/Accounts";
+import { ContactDetailPage, ContactsPage } from "./pages/Contacts";
 import { DashboardPage } from "./pages/Dashboard";
-import { LeadsPage } from "./pages/Leads";
-import { OpportunitiesPage } from "./pages/Opportunities";
+import { LeadDetailPage, LeadsPage } from "./pages/Leads";
+import { OpportunitiesPage, OpportunityDetailPage } from "./pages/Opportunities";
 import { OrganizationPage } from "./pages/Organization";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
@@ -66,9 +66,13 @@ export function App() {
     page = (
       <Switch>
         <Route path="/leads" component={LeadsPage} />
+        <Route path="/leads/:id" component={LeadDetailPage} />
         <Route path="/contacts" component={ContactsPage} />
+        <Route path="/contacts/:id" component={ContactDetailPage} />
         <Route path="/accounts" component={AccountsPage} />
+        <Route path="/accounts/:id" component={AccountDetailPage} />
         <Route path="/opportunities" component={OpportunitiesPage} />
+        <Route path="/opportunities/:id" component={OpportunityDetailPage} />
         <Route path="/templates" component={TemplatesPage} />
         <Route path="/sequences" component={SequencesPage} />
         <Route path="/sequences/:id" component={SequenceDetailPage} />

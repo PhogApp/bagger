@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Columns3, List } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
-import { ActivityTimeline } from "@/components/ActivityTimeline";
+import { RecordDetail } from "@/components/RecordDetail";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge, STATUS_TONES } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
   type StatusOption,
 } from "@/lib/api";
 import { cn, formatDay, formatMoney } from "@/lib/utils";
+import { useAccountPicker } from "./Contacts";
 import { defaultStatus, nameOf, ownerField, statusColor, statusField } from "./shared";
 
 interface Opportunity {
@@ -27,10 +28,7 @@ interface Opportunity {
   closeDate: string | null;
   status: string;
   closedAt: string | null;
-}
-interface AccountRow {
-  id: string;
-  name: string;
+  [field: string]: unknown;
 }
 interface ContactRow {
   id: string;
@@ -44,6 +42,52 @@ const CLOSED_DAYS_ON_BOARD = 30;
 const isClosedStage = (stage: StatusOption) => stage.effect === "won" || stage.effect === "lost";
 const total = (rows: Opportunity[]) => rows.reduce((sum, o) => sum + Number(o.amount ?? 0), 0);
 
+/** Every contact, for the Main Contact picker and for showing names. */
+function useContactPicker() {
+  const api = useApi();
+  const contacts = useQuery({
+    queryKey: ["contacts", "for-picker"],
+    queryFn: () => api<ContactRow[]>("GET", "/api/contacts?limit=500"),
+  });
+  const contactName = (id: string | null) => {
+    const c = id ? contacts.data?.find((x) => x.id === id) : undefined;
+    return c ? `${c.firstName} ${c.lastName}` : null;
+  };
+  return { contacts, contactName };
+}
+
+function useOpportunityFields(): Field[] {
+  const { data: users } = useOrgUsers();
+  const { data: statuses } = useStatuses();
+  const { accounts, accountName } = useAccountPicker();
+  const { contacts } = useContactPicker();
+  return [
+    { name: "name", label: "Opportunity Name", required: true, span: 6 },
+    {
+      name: "accountId",
+      label: "Account",
+      kind: "select",
+      required: true,
+      options: (accounts.data ?? []).map((a) => ({ value: a.id, label: a.name })),
+    },
+    {
+      name: "contactId",
+      label: "Main Contact",
+      kind: "select",
+      options: (contacts.data ?? []).map((c) => ({
+        value: c.id,
+        label: `${c.firstName} ${c.lastName} (${accountName(c.accountId)})`,
+      })),
+      help: "Someone at the account above.",
+    },
+    { name: "amount", label: "Amount", placeholder: "12500", span: 2 },
+    { name: "closeDate", label: "Expected Close", kind: "date", span: 2 },
+    { ...statusField(statuses, "opportunities"), label: "Stage", span: 2 },
+    ownerField(users),
+    { name: "notes", label: "Notes", kind: "textarea", span: 6 },
+  ];
+}
+
 export function OpportunitiesPage() {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -54,15 +98,7 @@ export function OpportunitiesPage() {
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
 
-  const accounts = useQuery({
-    queryKey: ["accounts", "for-picker"],
-    queryFn: () => api<AccountRow[]>("GET", "/api/accounts?limit=500"),
-  });
-  const contacts = useQuery({
-    queryKey: ["contacts", "for-picker"],
-    queryFn: () => api<ContactRow[]>("GET", "/api/contacts?limit=500"),
-  });
-  const accountName = (id: string) => accounts.data?.find((a) => a.id === id)?.name ?? "—";
+  const { accounts, accountName } = useAccountPicker();
 
   const moveStage = useMutation({
     mutationFn: (move: { id: string; status: string }) =>
@@ -89,31 +125,7 @@ export function OpportunitiesPage() {
   const stages = (statuses ?? []).filter((s) => s.object === "opportunities");
   const can = permissionsFor(me, "opportunities");
 
-  const fields: Field[] = [
-    { name: "name", label: "Opportunity Name", required: true, span: 6 },
-    {
-      name: "accountId",
-      label: "Account",
-      kind: "select",
-      required: true,
-      options: (accounts.data ?? []).map((a) => ({ value: a.id, label: a.name })),
-    },
-    {
-      name: "contactId",
-      label: "Main Contact",
-      kind: "select",
-      options: (contacts.data ?? []).map((c) => ({
-        value: c.id,
-        label: `${c.firstName} ${c.lastName} (${accountName(c.accountId)})`,
-      })),
-      help: "Someone at the account above.",
-    },
-    { name: "amount", label: "Amount", placeholder: "12500", span: 2 },
-    { name: "closeDate", label: "Expected Close", kind: "date", span: 2 },
-    { ...statusField(statuses, "opportunities"), label: "Stage", span: 2 },
-    ownerField(users),
-    { name: "notes", label: "Notes", kind: "textarea", span: 6 },
-  ];
+  const fields = useOpportunityFields();
 
   const columns: Column<Opportunity>[] = [
     { header: "Opportunity", cell: (o) => <span className="font-medium">{o.name}</span> },
@@ -293,14 +305,50 @@ export function OpportunitiesPage() {
       defaults={{ status: defaultStatus(statuses, "opportunities"), ownerId: me?.user.id ?? "" }}
       headerActions={toggle}
       renderList={view === "board" ? board : undefined}
-      tabs={[
-        {
-          value: "activity",
-          label: "Activity",
-          render: (r) => <ActivityTimeline about={{ opportunityId: r.id }} />,
-        },
-      ]}
+      detailPath={(id) => `/opportunities/${id}`}
       describe={(o) => o.name}
+    />
+  );
+}
+
+export function OpportunityDetailPage({ params }: { params: { id: string } }) {
+  const { data: statuses } = useStatuses();
+  const { accountName } = useAccountPicker();
+  const { contactName } = useContactPicker();
+  const fields = useOpportunityFields();
+  const link = (href: string, text: string) => (
+    <Link href={href} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+      {text}
+    </Link>
+  );
+  return (
+    <RecordDetail<Opportunity>
+      object="opportunities"
+      recordType="opportunity"
+      id={params.id}
+      listHref="/opportunities"
+      listLabel="Opportunities"
+      fields={fields}
+      title={(o) => o.name}
+      subtitle={(o) => (
+        <>
+          {link(`/accounts/${o.accountId}`, accountName(o.accountId))}
+          {o.amount !== null && ` · ${formatMoney(Number(o.amount))}`}
+          {o.closeDate && ` · expected to close ${formatDay(o.closeDate)}`}
+        </>
+      )}
+      badge={(o) => (
+        <StatusBadge status={o.status} color={statusColor(statuses, "opportunities", o.status)} />
+      )}
+      display={{
+        accountId: (o) => link(`/accounts/${o.accountId}`, accountName(o.accountId)),
+        contactId: (o) =>
+          o.contactId
+            ? link(`/contacts/${o.contactId}`, contactName(o.contactId) ?? "Contact")
+            : null,
+        amount: (o) => (o.amount === null ? null : formatMoney(Number(o.amount))),
+      }}
+      activity={(o) => ({ opportunityId: o.id })}
     />
   );
 }
