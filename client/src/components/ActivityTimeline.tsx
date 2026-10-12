@@ -32,6 +32,7 @@ import {
   type ActivityStatus,
   type ActivityType,
 } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import { cn, formatDateTime, formatDay } from "@/lib/utils";
 
 /** What one record's timeline is about: exactly one of these. */
@@ -295,9 +296,13 @@ export function ActivityDialog(props: {
       if (Object.keys(patch).length === 0) return null;
       return api("PATCH", `/api/activities/${existing.id}`, patch);
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await refresh();
       props.onOpenChange(false);
+      if (!result) return;
+      toast.success(
+        existing ? "Activity saved" : status === "open" ? "Activity planned" : "Activity logged",
+      );
     },
   });
   const remove = useMutation({
@@ -305,6 +310,7 @@ export function ActivityDialog(props: {
     onSuccess: async () => {
       await refresh();
       props.onOpenChange(false);
+      toast.success("Activity deleted");
     },
   });
 
@@ -532,12 +538,22 @@ export function ActivityDialog(props: {
 export function useCompleteActivity() {
   const api = useApi();
   const queryClient = useQueryClient();
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["activities"] });
+    await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  };
   return useMutation({
     mutationFn: (id: string) => api("PATCH", `/api/activities/${id}`, { status: "completed" }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["activities"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    onSuccess: async (_result, id) => {
+      await refresh();
+      toast.success("Activity completed", {
+        undo: () =>
+          api("PATCH", `/api/activities/${id}`, { status: "open" }).then(refresh, (e: Error) =>
+            toast.error(e.message),
+          ),
+      });
     },
+    onError: (e: Error) => toast.error(e.message),
   });
 }
 
@@ -661,7 +677,6 @@ export function ActivityTimeline({ about }: { about: ActivityAbout }) {
           )}
         </div>
       )}
-      {complete.error && <p className="text-sm text-destructive">{complete.error.message}</p>}
 
       <ActivityDialog
         open={dialog !== null}

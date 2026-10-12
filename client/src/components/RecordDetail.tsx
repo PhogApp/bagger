@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Pencil } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { ActivityTimeline, type ActivityAbout } from "@/components/ActivityTimeline";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, permissionsFor, useApi, useMe } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import { cn, formatDay, formatPhone } from "@/lib/utils";
 
 /**
@@ -116,18 +117,12 @@ function InlineField<T extends Row>(props: {
   const [error, setError] = useState<string | null>(null);
   const [asking, setAsking] = useState<{ question: string; value: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const box = useRef<HTMLInputElement & HTMLTextAreaElement & HTMLSelectElement>(null);
   const id = `field-${field.name}`;
 
   useEffect(() => {
     if (editing) box.current?.focus();
   }, [editing]);
-  useEffect(() => {
-    if (!saved) return;
-    const timer = setTimeout(() => setSaved(false), 2500);
-    return () => clearTimeout(timer);
-  }, [saved]);
 
   const start = () => {
     if (!props.editable) return;
@@ -157,7 +152,6 @@ function InlineField<T extends Row>(props: {
       setEditing(false);
       setAsking(null);
       setError(null);
-      setSaved(true);
     } catch (e) {
       setError(
         e instanceof Error ? e.message.replace(`${field.name}:`, `${field.label}:`) : "Not saved",
@@ -188,11 +182,6 @@ function InlineField<T extends Row>(props: {
         className="text-xs font-medium text-muted-foreground"
       >
         {field.label}
-        {saved && (
-          <span role="status" className="ml-2 inline-flex items-center gap-0.5 text-brand-teal">
-            <Check className="h-3 w-3" aria-hidden /> Saved
-          </span>
-        )}
       </label>
       {editing ? (
         <div className="mt-1 space-y-1">
@@ -348,13 +337,6 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     if (goTo) navigate(goTo, { replace: true });
   }, [goTo, navigate]);
 
-  // The last change, so it can be put back.
-  const [undo, setUndo] = useState<{ field: Field; value: unknown } | null>(null);
-  useEffect(() => {
-    if (!undo) return;
-    const timer = setTimeout(() => setUndo(null), 8000);
-    return () => clearTimeout(timer);
-  }, [undo]);
 
   const refresh = async (updated: T) => {
     queryClient.setQueryData(key, updated);
@@ -370,6 +352,11 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [props.object] });
       navigate(props.listHref);
+      toast.success(`${record.data ? props.title(record.data) : "Record"} deleted`);
+    },
+    onError: (e: Error) => {
+      setConfirmingDelete(false);
+      toast.error(e.message);
     },
   });
 
@@ -443,11 +430,6 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
               ))}
           </div>
         </div>
-        {remove.error && (
-          <p role="alert" className="mt-2 text-sm text-destructive">
-            {remove.error.message}
-          </p>
-        )}
         {frozen && (
           <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             {frozen}
@@ -485,30 +467,17 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
                   save={async (value) => {
                     const before = valueOf(row, field.name);
                     await patch(field.name, field.parse ? field.parse(value) : value);
-                    setUndo({ field, value: before ?? "" });
+                    toast.success(`${field.label} saved`, {
+                      undo: () =>
+                        patch(field.name, before ?? "").then(
+                          () => toast.success(`${field.label} put back`),
+                          (e: Error) => toast.error(e.message),
+                        ),
+                    });
                   }}
                 />
               ))}
             </div>
-            {undo && (
-              <div
-                role="status"
-                className="mt-4 flex items-center gap-3 rounded-md bg-muted/70 px-3 py-2 text-sm"
-              >
-                <span>{undo.field.label} saved.</span>
-                <button
-                  type="button"
-                  className="font-medium text-primary hover:underline"
-                  onClick={async () => {
-                    const { field, value } = undo;
-                    setUndo(null);
-                    await patch(field.name, value);
-                  }}
-                >
-                  Undo
-                </button>
-              </div>
-            )}
           </section>
           {props.below?.(row)}
         </div>

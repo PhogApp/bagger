@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
 import Papa from "papaparse";
 import { Download, TriangleAlert, Upload } from "lucide-react";
 import { useState } from "react";
@@ -359,6 +360,11 @@ function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void
     mutationFn: () => send(review && review.duplicates.length > 0 ? onDuplicate : "skip"),
     onSuccess: async (total) => {
       setResult(total);
+      const said =
+        `${count(total.created, cfg.singular, cfg.plural)} imported` +
+        (total.updated ? `, ${total.updated.toLocaleString()} updated` : "");
+      if (total.errors.length) toast.warning(`${said}. ${count(total.errors.length, "row")} not imported.`);
+      else toast.success(said);
       for (const key of [kind, ...cfg.alsoRefresh]) {
         await queryClient.invalidateQueries({ queryKey: [key] });
       }

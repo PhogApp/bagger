@@ -25,7 +25,8 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { canUse, useApi, useMe } from "@/lib/api";
-import { formatDate, formatPhone } from "@/lib/utils";
+import { toast } from "@/lib/toast";
+import { formatDate, formatDay, formatPhone } from "@/lib/utils";
 
 type StepType = "email" | "phone_call" | "linkedin_connect" | "linkedin_message";
 
@@ -164,8 +165,11 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
     await queryClient.invalidateQueries({ queryKey: ["sequences"] });
   };
   const act = useMutation({
-    mutationFn: (call: () => Promise<unknown>) => call(),
-    onSuccess: refresh,
+    mutationFn: (job: { call: () => Promise<unknown>; done: string }) => job.call(),
+    onSuccess: async (_result, job) => {
+      await refresh();
+      toast.success(job.done);
+    },
     onError: (e: Error) => setError(e.message),
     onMutate: () => setError(null),
   });
@@ -175,6 +179,7 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
   const counts = (type: StepType) => tasks.filter((t) => t.step.type === type).length;
   const Icon = task ? TYPE_ICONS[task.step.type] : Mail;
   const base = task ? `/api/tasks/${task.taskId}` : "";
+  const who = task ? `${task.person.firstName} ${task.person.lastName}` : "";
   const phones = task
     ? ([
         ["Cell", task.person.cellPhone],
@@ -318,12 +323,15 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
                       size="sm"
                       disabled={act.isPending}
                       onClick={() =>
-                        act.mutate(async () => {
-                          await api("PUT", `${base}/message`, {
-                            body: draft.body,
-                            ...(task.step.type === "email" ? { subject: draft.subject } : {}),
-                          });
-                          setEditing(false);
+                        act.mutate({
+                          call: async () => {
+                            await api("PUT", `${base}/message`, {
+                              body: draft.body,
+                              ...(task.step.type === "email" ? { subject: draft.subject } : {}),
+                            });
+                            setEditing(false);
+                          },
+                          done: `Message saved for ${who}`,
                         })
                       }
                     >
@@ -363,9 +371,11 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
                         variant="ghost"
                         disabled={act.isPending}
                         onClick={() =>
-                          act.mutate(() =>
-                            api("PUT", `${base}/message`, { subject: null, body: null }),
-                          )
+                          act.mutate({
+                            call: () =>
+                              api("PUT", `${base}/message`, { subject: null, body: null }),
+                            done: "Message reset to the template",
+                          })
                         }
                       >
                         Reset to template
@@ -398,7 +408,10 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
             className="w-full"
             disabled={act.isPending || editing}
             onClick={() =>
-              act.mutate(() => api("POST", `${base}/complete`, note ? { note } : {}))
+              act.mutate({
+                call: () => api("POST", `${base}/complete`, note ? { note } : {}),
+                done: `${task.step.title} completed for ${who}`,
+              })
             }
           >
             <Check className="mr-2 h-4 w-4" aria-hidden />
@@ -409,7 +422,12 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
               className="flex-1"
               variant="outline"
               disabled={act.isPending}
-              onClick={() => act.mutate(() => api("POST", `${base}/skip`, note ? { note } : {}))}
+              onClick={() =>
+                act.mutate({
+                  call: () => api("POST", `${base}/skip`, note ? { note } : {}),
+                  done: `${task.step.title} skipped for ${who}`,
+                })
+              }
             >
               <X className="mr-2 h-4 w-4" aria-hidden />
               Skip
@@ -426,7 +444,12 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
                 variant="outline"
                 aria-label="Snooze"
                 disabled={act.isPending || !snoozeTo}
-                onClick={() => act.mutate(() => api("POST", `${base}/snooze`, { dueOn: snoozeTo }))}
+                onClick={() =>
+                  act.mutate({
+                    call: () => api("POST", `${base}/snooze`, { dueOn: snoozeTo }),
+                    done: `${task.step.title} for ${who} moved to ${formatDay(snoozeTo)}`,
+                  })
+                }
               >
                 <Clock className="h-4 w-4" aria-hidden />
               </Button>

@@ -18,6 +18,7 @@ import {
 import { cn, formatDay, formatMoney } from "@/lib/utils";
 import { useAccountPicker } from "./Contacts";
 import { defaultStatus, nameOf, ownerField, statusColor, statusField } from "./shared";
+import { toast } from "@/lib/toast";
 
 interface Opportunity {
   id: string;
@@ -102,9 +103,18 @@ export function OpportunitiesPage() {
   const { accounts, accountName } = useAccountPicker();
 
   const moveStage = useMutation({
-    mutationFn: (move: { id: string; status: string }) =>
+    mutationFn: (move: { id: string; name: string; status: string; from: string }) =>
       api("PATCH", `/api/opportunities/${move.id}`, { status: move.status }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
+    onSuccess: (_result, move) =>
+      toast.success(`${move.name} moved to ${move.status}`, {
+        undo: () =>
+          api("PATCH", `/api/opportunities/${move.id}`, { status: move.from }).then(
+            () => queryClient.invalidateQueries({ queryKey: ["opportunities"] }),
+            (e: Error) => toast.error(e.message),
+          ),
+      }),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   // An opportunity must belong to an account, so there has to be one first.
@@ -211,7 +221,12 @@ export function OpportunitiesPage() {
                   e.preventDefault();
                   const moved = rows.find((o) => o.id === dragging);
                   if (moved && moved.status !== stage.name) {
-                    moveStage.mutate({ id: moved.id, status: stage.name });
+                    moveStage.mutate({
+                      id: moved.id,
+                      name: moved.name,
+                      status: stage.name,
+                      from: moved.status,
+                    });
                   }
                   setDragging(null);
                   setOver(null);
@@ -277,11 +292,6 @@ export function OpportunitiesPage() {
             );
           })}
         </div>
-        {moveStage.error && (
-          <p role="alert" className="px-4 pb-4 text-sm text-destructive">
-            {moveStage.error.message}
-          </p>
-        )}
       </div>
     );
   };

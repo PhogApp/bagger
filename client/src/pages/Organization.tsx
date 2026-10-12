@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useApi, useMe } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { toast } from "@/lib/toast";
 
 interface Person {
   id: string;
@@ -66,7 +67,11 @@ export function OrganizationPage() {
 
   const saveBilling = useMutation({
     mutationFn: () => api("PATCH", "/api/organization", { billingEmail }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["organization"] }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["organization"] });
+      toast.success("Billing email saved");
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
   const transfer = useMutation({
     mutationFn: () => api("POST", "/api/organization/transfer", { userId: newOwner }),
@@ -75,6 +80,7 @@ export function OrganizationPage() {
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       await queryClient.invalidateQueries({ queryKey: ["users"] });
       navigate("/settings");
+      toast.success("Ownership transferred");
     },
   });
 
@@ -216,17 +222,6 @@ export function OrganizationPage() {
             >
               Save
             </Button>
-            {saveBilling.error ? (
-              <span role="alert" className="text-sm text-destructive">
-                {saveBilling.error.message}
-              </span>
-            ) : (
-              saveBilling.isSuccess && (
-                <span role="status" className="text-sm text-muted-foreground">
-                  Saved
-                </span>
-              )
-            )}
           </div>
           <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
             Your card, invoices and seat count will appear here once payments are switched on.

@@ -41,6 +41,7 @@ import {
   type ActivityStatus,
 } from "@/lib/api";
 import { cn, formatDateTime, formatDay } from "@/lib/utils";
+import { count, toast } from "@/lib/toast";
 
 /**
  * Every activity in one list: open ones still to do and completed ones, each
@@ -264,20 +265,16 @@ export function ActivitiesPage() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const selected = rows.filter((r) => checked.has(r.id));
   const allChecked = rows.length > 0 && selected.length === rows.length;
-  const [notice, setNotice] = useState<string | null>(null);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), 8000);
-    return () => clearTimeout(timer);
-  }, [notice]);
 
   const canExport = canUse(me, "data.export_lists");
   const [exporting, setExporting] = useState(false);
-  const exportRows = (chosen: Activity[]) =>
+  const exportRows = (chosen: Activity[]) => {
     downloadCsv(`bagger-activities-${new Date().toISOString().slice(0, 10)}`, [
       columns.map((c) => c.header),
       ...chosen.map((a) => columns.map((c) => c.csv(a))),
     ]);
+    toast.success(`${count(chosen.length, "activity", "activities")} exported`);
+  };
   const exportAll = async () => {
     setExporting(true);
     try {
@@ -398,7 +395,6 @@ export function ActivitiesPage() {
                 statusLabel="Status"
                 canDelete={selected.every((r) => can.canDelete(r.ownerId))}
                 onDone={() => setChecked(new Set())}
-                onResult={setNotice}
               />
               {canExport && (
                 <ExportButton label="Export selected" onClick={() => exportRows(selected)} />
@@ -407,16 +403,6 @@ export function ActivitiesPage() {
                 Clear
               </Button>
             </div>
-          )}
-          {notice && selected.length === 0 && (
-            <p role="status" className="border-b bg-muted/60 px-4 py-2 text-sm">
-              {notice}
-            </p>
-          )}
-          {complete.error && (
-            <p role="alert" className="border-b px-4 py-2 text-sm text-destructive">
-              {complete.error.message}
-            </p>
           )}
 
           {list.error ? (

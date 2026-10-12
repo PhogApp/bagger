@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { count, toast } from "@/lib/toast";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,10 +60,23 @@ export function BulkEnrollButton({
         [kind === "leads" ? "leadIds" : "contactIds"]: people.map((p) => p.id),
       }),
     onSuccess: async (res) => {
-      setResult(res);
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
       await queryClient.invalidateQueries({ queryKey: ["sequences"] });
       await queryClient.invalidateQueries({ queryKey: ["sequence"] });
+      const where = active.find((x) => x.id === sequenceId)?.name ?? "the sequence";
+      const said = `${count(res.enrolled, "person", "people")} enrolled in ${where}`;
+      if (res.skipped.length === 0) {
+        // Nothing more to tell than the message: close and say so.
+        toast.success(said);
+        setOpen(false);
+        setSequenceId("");
+        enroll.reset();
+        onDone();
+      } else {
+        // Who was skipped and why needs the room of the window.
+        setResult(res);
+        toast.warning(`${said}. ${res.skipped.length} skipped.`);
+      }
     },
   });
 

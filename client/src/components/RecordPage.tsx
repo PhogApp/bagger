@@ -44,6 +44,7 @@ import {
   type StatusObject,
 } from "@/lib/api";
 import { customFieldAsField, useFieldSetup, type LayoutObject } from "@/lib/fields";
+import { count, toast } from "@/lib/toast";
 import { cn, formatDateTime } from "@/lib/utils";
 
 /**
@@ -474,11 +475,15 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   };
   const canExport = Boolean(tools) && canUse(me, "data.export_lists");
   const [exporting, setExporting] = useState(false);
-  const exportRows = (chosen: T[]) =>
+  const exportRows = (chosen: T[]) => {
     downloadCsv(`bagger-${object}-${new Date().toISOString().slice(0, 10)}`, [
       columns.map((c) => c.header),
       ...chosen.map((row) => columns.map((c) => csvValue(c, row))),
     ]);
+    toast.success(
+      `${count(chosen.length, singular.toLowerCase(), props.title.toLowerCase())} exported`,
+    );
+  };
   // Everything that matches the current search and filters, a page at a time.
   const exportAll = async () => {
     setExporting(true);
@@ -509,13 +514,6 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const rows = list.data?.rows ?? [];
   const selectable = Boolean(props.bulkActions || tools);
-  // The outcome of the last bulk change, kept on screen for a while.
-  const [notice, setNotice] = useState<string | null>(null);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), 8000);
-    return () => clearTimeout(timer);
-  }, [notice]);
   const selected = rows.filter((r) => checked.has(r.id));
   const allChecked = rows.length > 0 && selected.length === rows.length;
   const toggle = (id: string) =>
@@ -638,7 +636,9 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       return api("PATCH", `/api/${object}/${(editing as T).id}`, toBody(parsed(changed)));
     },
     onSuccess: async (created) => {
+      const wasNew = editing === "new";
       await done();
+      if (created) toast.success(wasNew ? `${singular} added` : "Changes saved");
       const id = (created as { id?: string } | null)?.id;
       if (props.detailPath && editing === "new" && id) navigateTo(props.detailPath(id));
     },
@@ -653,7 +653,10 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
 
   const remove = useMutation({
     mutationFn: () => api("DELETE", `/api/${object}/${(editing as T).id}`),
-    onSuccess: done,
+    onSuccess: async () => {
+      await done();
+      toast.success(`${singular} deleted`);
+    },
     onError: (e: Error) => setFormError(relabel(e.message)),
   });
 
@@ -779,7 +782,6 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                   statusLabel={tools.statusLabel ?? "Status"}
                   canDelete={selected.every((r) => can.canDelete(r.ownerId))}
                   onDone={() => setChecked(new Set())}
-                  onResult={setNotice}
                 />
               )}
               {canExport && (
@@ -789,12 +791,6 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                 Clear
               </Button>
             </div>
-          )}
-
-          {notice && selected.length === 0 && (
-            <p role="status" className="border-b bg-muted/60 px-4 py-2 text-sm">
-              {notice}
-            </p>
           )}
           {list.error ? (
             <p className="p-8 text-center text-sm text-destructive">{list.error.message}</p>

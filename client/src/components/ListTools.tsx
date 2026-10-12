@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Columns3, Download } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { canUse, useApi, type Me, type OrgUser, type StatusOption } from "@/lib/api";
+import { count, toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 /**
@@ -359,13 +360,11 @@ export function BulkChanges(props: {
   statusLabel: string;
   canDelete: boolean;
   onDone: () => void;
-  /** What happened, said where it stays visible after the selection clears. */
-  onResult: (message: string) => void;
 }) {
   const api = useApi();
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const singular = props.plural.replace(/ies$/, "y").replace(/s$/, "");
   const run = useMutation({
     mutationFn: (body: { action: "update" | "delete"; patch?: Record<string, string> }) =>
       api<{ done: number; skipped: { id: string; reason: string }[] }>(
@@ -379,16 +378,14 @@ export function BulkChanges(props: {
     onSuccess: async (r, body) => {
       const verb = body.action === "delete" ? "deleted" : "updated";
       const reasons = [...new Set(r.skipped.map((s) => s.reason))].join("; ");
-      const said =
-        `${r.done.toLocaleString()} ${verb}.` +
-        (r.skipped.length ? ` ${r.skipped.length} skipped: ${reasons}.` : "");
-      setMessage(said);
-      props.onResult(said);
+      const said = `${count(r.done, singular, props.plural)} ${verb}.`;
+      if (r.skipped.length) toast.warning(`${said} ${r.skipped.length} skipped: ${reasons}.`);
+      else toast.success(said);
       setConfirming(false);
       await queryClient.invalidateQueries({ queryKey: [props.object] });
       if (r.skipped.length === 0) props.onDone();
     },
-    onError: (e: Error) => setMessage(e.message),
+    onError: (e: Error) => toast.error(e.message),
   });
   const edit = canUse(props.me, "data.bulk_edit");
   const reassign = canUse(props.me, "data.bulk_reassign");
@@ -457,11 +454,6 @@ export function BulkChanges(props: {
             Delete
           </Button>
         ))}
-      {message && (
-        <span role="status" className="text-sm">
-          {message}
-        </span>
-      )}
     </>
   );
 }
