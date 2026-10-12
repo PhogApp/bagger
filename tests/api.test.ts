@@ -1485,6 +1485,70 @@ describe("searching everything at once", () => {
   });
 });
 
+describe("template and sequence pages", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+
+  beforeAll(async () => {
+    boss = await createOrg(db);
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+  });
+
+  it("says where a template is used, and won't delete one a step still sends", async () => {
+    const template = (
+      await as(seller).post("/api/templates", { name: "Breakup", type: "email", subject: "Closing the loop", body: "Hi {firstName}" })
+    ).body;
+    const unused = (
+      await as(seller).post("/api/templates", { name: "Alpha note", type: "linkedin", body: "Hello" })
+    ).body;
+    const sequence = (await as(seller).post("/api/sequences", { name: "Pages V1" })).body;
+    const step = (
+      await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "Last touch", templateId: template.id })
+    ).body;
+
+    const usage = (await as(seller).get(`/api/templates/${template.id}/usage`)).body;
+    expect(usage).toEqual([
+      expect.objectContaining({ sequenceId: sequence.id, sequenceName: "Pages V1", stepId: step.id, stepTitle: "Last touch", position: 1 }),
+    ]);
+    expect((await as(outsider).get(`/api/templates/${template.id}/usage`)).body).toEqual([]);
+
+    const blocked = await as(boss).del(`/api/templates/${template.id}`);
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toContain("used by 1 sequence step");
+    expect((await as(seller).get(`/api/templates/${template.id}`)).status).toBe(200);
+
+    // Once the step stops using it, it can go.
+    await as(seller).patch(`/api/steps/${step.id}`, { templateId: null, subject: "Closing", body: "Hi" });
+    expect((await as(boss).del(`/api/templates/${template.id}`)).status).toBe(204);
+    expect((await as(boss).del(`/api/templates/${unused.id}`)).status).toBe(204);
+  });
+
+  it("won't delete a sequence people are still in", async () => {
+    const sequence = (await as(seller).post("/api/sequences", { name: "Pages V2", description: "Spring push" })).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "phone_call", title: "Call" });
+    const lead = (await as(seller).post("/api/leads", newLead({ email: "pages@example.com" }))).body;
+    const enrolled = (await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: lead.id })).body;
+
+    const blocked = await as(boss).del(`/api/sequences/${sequence.id}`);
+    expect(blocked.status).toBe(400);
+    expect(blocked.body.message).toContain("1 person is still in this sequence");
+    await as(seller).post(`/api/enrollments/${enrolled.enrollment.id}/stop`, { reason: "removed" });
+    expect((await as(boss).del(`/api/sequences/${sequence.id}`)).status).toBe(204);
+  });
+
+  it("sorts and searches the template and sequence lists", async () => {
+    for (const name of ["Zulu", "Mike", "Bravo"]) {
+      await as(seller).post("/api/templates", { name: `${name} sort`, type: "email", subject: name, body: "x" });
+    }
+    const page = (await as(seller).get("/api/templates?q=sort&sort=name&dir=desc&withTotal=1")).body;
+    expect(page.total).toBe(3);
+    expect(page.rows.map((t: { name: string }) => t.name)).toEqual(["Zulu sort", "Mike sort", "Bravo sort"]);
+    await as(seller).post("/api/sequences", { name: "Quiet one", description: "for summer", isActive: false });
+    const found = (await as(seller).get("/api/sequences?q=summer&sort=isActive")).body;
+    expect(found.map((x: { name: string }) => x.name)).toEqual(["Quiet one"]);
+  });
+});
+
 describe("custom fields and record layouts", () => {
   let boss: Ctx;
   let seller: Ctx;

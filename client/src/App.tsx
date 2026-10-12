@@ -15,7 +15,7 @@ import { ReportsPage } from "./pages/Reports";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
 import { AdminPage, browserTimeZone, SettingsPage } from "./pages/Settings";
-import { TemplatesPage } from "./pages/Templates";
+import { TemplateDetailPage, TemplatesPage } from "./pages/Templates";
 
 function Notice({ title, children }: { title: string; children: string }) {
   return (
@@ -80,6 +80,7 @@ export function App() {
         <Route path="/reports" component={ReportsPage} />
         <Route path="/reports/custom/:id" component={ReportBuilderPage} />
         <Route path="/templates" component={TemplatesPage} />
+        <Route path="/templates/:id" component={TemplateDetailPage} />
         <Route path="/sequences" component={SequencesPage} />
         <Route path="/sequences/:id" component={SequenceDetailPage} />
         <Route path="/settings" component={SettingsPage} />
