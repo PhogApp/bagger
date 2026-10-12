@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import {
   accounts,
+  activities,
   contacts,
   doNotContact,
   enrollments,
@@ -388,9 +389,57 @@ async function closeTask(
       })
       .where(eq(stepTasks.id, task.id));
     await logEvent(tx, ctx, `step.${outcome}`, enrollment, { stepId: task.stepId, at });
+    if (outcome === "completed") {
+      await logStepActivity(tx, ctx, task, enrollment, content, input.note, at);
+    }
 
     const nextTask = await advance(tx, ctx, enrollment, task.stepId, at);
     return { nextTask };
+  });
+}
+
+const ACTIVITY_FOR_STEP: Record<Step["type"], "email" | "call" | "linkedin"> = {
+  email: "email",
+  phone_call: "call",
+  linkedin_connect: "linkedin",
+  linkedin_message: "linkedin",
+};
+
+/**
+ * A completed step is something the rep did, so it goes on the person's
+ * activity timeline (and, for a contact, the account's) like any logged call
+ * or email.
+ */
+async function logStepActivity(
+  tx: Db,
+  ctx: Ctx,
+  task: StepTask,
+  enrollment: Enrollment,
+  content: ResolvedContent | undefined,
+  note: string | undefined,
+  at: Date,
+): Promise<void> {
+  const [step] = await tx.select().from(sequenceSteps).where(eq(sequenceSteps.id, task.stepId));
+  let accountId: string | null = null;
+  if (enrollment.contactId) {
+    const [contact] = await tx
+      .select({ accountId: contacts.accountId })
+      .from(contacts)
+      .where(eq(contacts.id, enrollment.contactId));
+    accountId = contact?.accountId ?? null;
+  }
+  const body = [content?.body, note ? `Note: ${note}` : null].filter(Boolean).join("\n\n");
+  await tx.insert(activities).values({
+    orgId: ctx.orgId,
+    ownerId: ctx.userId,
+    type: ACTIVITY_FOR_STEP[step.type],
+    subject: content?.subject || step.title,
+    body: body || null,
+    occurredAt: at,
+    leadId: enrollment.leadId,
+    contactId: enrollment.contactId,
+    accountId,
+    stepTaskId: task.id,
   });
 }
 

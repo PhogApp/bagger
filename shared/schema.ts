@@ -334,6 +334,55 @@ export const opportunityStageHistory = pgTable(
   (t) => [index("opportunity_stage_history_opp_idx").on(t.opportunityId, t.changedAt)],
 );
 
+// ----------------------------------------------------------- activities
+
+export const ACTIVITY_TYPES = ["call", "email", "linkedin", "meeting", "note"] as const;
+export type ActivityType = (typeof ACTIVITY_TYPES)[number];
+
+/**
+ * Something a rep did: a call, an email, a LinkedIn touch, a meeting, or a
+ * note. Logged by hand, or written by the sequence engine when a step is
+ * completed. It hangs off a lead or a contact and, for a contact, its
+ * account too, so the account's timeline shows everyone's activity.
+ */
+export const activities = pgTable(
+  "activities",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** Who did it. */
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id),
+    type: text("type").$type<ActivityType>().notNull(),
+    subject: text("subject"),
+    body: text("body"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    leadId: uuid("lead_id").references(() => leads.id),
+    contactId: uuid("contact_id").references(() => contacts.id),
+    accountId: uuid("account_id").references(() => accounts.id),
+    opportunityId: uuid("opportunity_id").references(() => opportunities.id),
+    /** Set when the sequence engine wrote it for a completed step. */
+    stepTaskId: uuid("step_task_id").references(() => stepTasks.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    deletedAt: deletedAt(),
+  },
+  (t) => [
+    index("activities_org_time_idx").on(t.orgId, t.occurredAt),
+    index("activities_lead_idx").on(t.leadId),
+    index("activities_contact_idx").on(t.contactId),
+    index("activities_account_idx").on(t.accountId),
+    index("activities_opportunity_idx").on(t.opportunityId),
+    check(
+      "activities_about_someone",
+      sql`${t.leadId} is not null or ${t.contactId} is not null or ${t.accountId} is not null or ${t.opportunityId} is not null`,
+    ),
+  ],
+);
+
 export const doNotContact = pgTable(
   "do_not_contact",
   {

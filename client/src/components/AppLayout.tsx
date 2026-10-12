@@ -3,6 +3,7 @@ import {
   CircleDollarSign,
   FileText,
   Landmark,
+  LayoutDashboard,
   ListOrdered,
   ShieldCheck,
   UserPlus,
@@ -18,6 +19,7 @@ import { Brand } from "./Brand";
 import { RunStepsButton } from "./RunSteps";
 
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: UserPlus },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/accounts", label: "Accounts", icon: Building2 },
@@ -52,7 +54,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const { userName, userImageUrl, orgName, orgLogoUrl } = useSession();
   const { data: me } = useMe();
-  const at = (href: string) => location === href || location.startsWith(`${href}/`);
+  const at = (href: string) =>
+    href === "/" ? location === "/" : location === href || location.startsWith(`${href}/`);
 
   return (
     <div className="flex min-h-screen flex-col">

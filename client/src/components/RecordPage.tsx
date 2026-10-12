@@ -79,6 +79,8 @@ export interface RecordPageProps<T extends BaseRecord> {
   describe: (row: T) => string;
   /** When set, clicking a row calls this instead of opening the edit dialog. */
   onRowOpen?: (row: T) => void;
+  /** More tabs in a record's dialog, between Details and History, e.g. Activity. */
+  tabs?: { value: string; label: string; render: (row: T) => ReactNode }[];
   /** Shown under a record's own fields, e.g. the contacts on an account. */
   related?: (row: T) => ReactNode;
   /** Extra buttons in the edit dialog for one record, e.g. Convert. Call `close` when done. */
@@ -315,9 +317,26 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
 
   const openRow = (row: T) => (props.onRowOpen ? props.onRowOpen(row) : open(row));
 
-  // A link such as /contacts?open=<id> lands on the list with that record open.
+  // A link such as /contacts?open=<id> lands on the list with that record open;
+  // /contacts?new=1&accountId=<id> opens a new one with those fields filled in.
   const [path, navigate] = useLocation();
-  const linkedId = new URLSearchParams(useSearch()).get("open");
+  const params = new URLSearchParams(useSearch());
+  const linkedId = params.get("open");
+  const startNew = params.get("new") === "1" ? params.toString() : null;
+  useEffect(() => {
+    if (!startNew) return;
+    const given = new URLSearchParams(startNew);
+    open("new");
+    setValues((prev) => ({
+      ...prev,
+      ...Object.fromEntries(
+        fields.filter((f) => given.has(f.name)).map((f) => [f.name, given.get(f.name) ?? ""]),
+      ),
+    }));
+    navigate(path, { replace: true });
+    // Only the address should trigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startNew]);
   useEffect(() => {
     if (!linkedId) return;
     let cancelled = false;
@@ -529,7 +548,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             </DialogDescription>
           </DialogHeader>
 
-          {isNew || !can.canViewHistory ? (
+          {!current || (!can.canViewHistory && !props.tabs?.length) ? (
             <>
               {form}
               {current && props.related?.(current)}
@@ -538,17 +557,27 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             <Tabs defaultValue="details">
               <TabsList>
                 <TabsTrigger value="details">Details</TabsTrigger>
-                <TabsTrigger value="history">History</TabsTrigger>
+                {props.tabs?.map((t) => (
+                  <TabsTrigger key={t.value} value={t.value}>
+                    {t.label}
+                  </TabsTrigger>
+                ))}
+                {can.canViewHistory && <TabsTrigger value="history">History</TabsTrigger>}
               </TabsList>
               <TabsContent value="details">
                 {form}
-                {current && props.related?.(current)}
+                {props.related?.(current)}
               </TabsContent>
-              <TabsContent value="history">
-                {current && (
+              {props.tabs?.map((t) => (
+                <TabsContent key={t.value} value={t.value}>
+                  {t.render(current)}
+                </TabsContent>
+              ))}
+              {can.canViewHistory && (
+                <TabsContent value="history">
                   <History recordType={props.recordType} recordId={current.id} fields={fields} />
-                )}
-              </TabsContent>
+                </TabsContent>
+              )}
             </Tabs>
           )}
 

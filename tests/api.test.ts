@@ -924,6 +924,309 @@ describe("the opportunity pipeline", () => {
   });
 });
 
+describe("activities and the dashboard", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  let seller2: Ctx;
+  let watcher: Ctx;
+  let account: { id: string };
+  let contact: { id: string };
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { waitDayMode: "calendar" });
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    seller2 = await addMember(db, boss.orgId, "rep", "Sue Seller");
+    watcher = await addMember(db, boss.orgId, "read_only", "Wes Watcher");
+    account = (await as(seller).post("/api/accounts", { name: "Activity Co" }))
+      .body;
+    contact = (
+      await as(seller).post("/api/contacts", {
+        firstName: "Ada",
+        lastName: "Active",
+        email: "ada@activity.example",
+        accountId: account.id,
+      })
+    ).body;
+  });
+
+  it("logs an activity by hand and files a contact's under the account too", async () => {
+    const call = await as(seller).post("/api/activities", {
+      type: "call",
+      subject: "Discovery call",
+      body: "Talked about month-end close",
+      contactId: contact.id,
+    });
+    expect(call.status).toBe(201);
+    expect(call.body).toMatchObject({
+      ownerId: seller.userId,
+      contactId: contact.id,
+      accountId: account.id,
+    });
+
+    const onAccount = (
+      await as(seller2).get(`/api/activities?accountId=${account.id}`)
+    ).body;
+    expect(onAccount[0]).toMatchObject({
+      type: "call",
+      subject: "Discovery call",
+      personName: "Ada Active",
+      accountName: "Activity Co",
+      ownerName: "Sal Seller",
+      fromSequence: false,
+    });
+
+    const bad = (body: object) => as(seller).post("/api/activities", body);
+    expect((await bad({ type: "call", subject: "Nobody" })).status).toBe(400);
+    expect((await bad({ type: "call", contactId: contact.id })).status).toBe(
+      400,
+    ); // nothing said
+    expect(
+      (await bad({ type: "fax", subject: "x", contactId: contact.id })).status,
+    ).toBe(400);
+    const future = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    expect(
+      (
+        await bad({
+          type: "note",
+          subject: "x",
+          contactId: contact.id,
+          occurredAt: future,
+        })
+      ).status,
+    ).toBe(400);
+    const other = (
+      await as(seller).post("/api/accounts", { name: "Other Activity Co" })
+    ).body;
+    expect(
+      (
+        await bad({
+          type: "note",
+          subject: "x",
+          contactId: contact.id,
+          accountId: other.id,
+        })
+      ).status,
+    ).toBe(400);
+    const foreign = (
+      await as(outsider).post("/api/accounts", { name: "Foreign Activity" })
+    ).body;
+    expect(
+      (await bad({ type: "note", subject: "x", accountId: foreign.id })).status,
+    ).toBe(400);
+    expect(
+      (
+        await as(watcher).post("/api/activities", {
+          type: "note",
+          subject: "x",
+          accountId: account.id,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await as(outsider).get(`/api/activities?accountId=${account.id}`)).body,
+    ).toHaveLength(0);
+    expect((await as(seller).get("/api/activities")).status).toBe(400);
+
+    // A rep cannot delete an activity; a manager or admin can.
+    expect(
+      (await as(seller).del(`/api/activities/${call.body.id}`)).status,
+    ).toBe(403);
+    expect((await as(boss).del(`/api/activities/${call.body.id}`)).status).toBe(
+      204,
+    );
+    expect(
+      (await as(seller).get(`/api/activities?accountId=${account.id}`)).body,
+    ).toHaveLength(0);
+  });
+
+  it("writes an activity for each completed step, and moves a lead's to the contact on conversion", async () => {
+    const sequence = (
+      await as(seller).post("/api/sequences", { name: "Activity steps" })
+    ).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, {
+      type: "email",
+      title: "Intro",
+      subject: "Hello {firstName}",
+      body: "Hi {firstName}",
+    });
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, {
+      type: "phone_call",
+      title: "Call",
+    });
+    const lead = (
+      await as(seller).post("/api/leads", {
+        firstName: "Lou",
+        lastName: "Lead",
+        email: "lou@activity.example",
+        company: "Activity Co",
+      })
+    ).body;
+    const enrolled = (
+      await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, {
+        leadId: lead.id,
+      })
+    ).body;
+    const done = (
+      await as(seller).post(`/api/tasks/${enrolled.task.id}/complete`, {})
+    ).body;
+    await as(seller).post(`/api/tasks/${done.nextTask.id}/skip`, {});
+
+    let mine = (await as(seller).get(`/api/activities?leadId=${lead.id}`)).body;
+    expect(mine).toHaveLength(1); // the skipped call is not an activity
+    expect(mine[0]).toMatchObject({
+      type: "email",
+      subject: "Hello Lou",
+      body: "Hi Lou",
+      fromSequence: true,
+    });
+
+    await as(seller).post("/api/activities", {
+      type: "note",
+      subject: "Met at trade show",
+      leadId: lead.id,
+    });
+    const converted = (
+      await as(seller).post(`/api/leads/${lead.id}/convert`, {
+        accountId: account.id,
+      })
+    ).body;
+    expect(
+      (await as(seller).get(`/api/activities?leadId=${lead.id}`)).body,
+    ).toHaveLength(0);
+    mine = (
+      await as(seller).get(`/api/activities?contactId=${converted.contactId}`)
+    ).body;
+    expect(mine.map((a: { type: string }) => a.type).sort()).toEqual([
+      "email",
+      "note",
+    ]);
+    expect(
+      mine.every((a: { accountId: string }) => a.accountId === account.id),
+    ).toBe(true);
+    // Nothing more can be logged on the converted lead.
+    expect(
+      (
+        await as(seller).post("/api/activities", {
+          type: "note",
+          subject: "x",
+          leadId: lead.id,
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("adds up the home screen for one rep, and for everyone when allowed", async () => {
+    const sequence = (
+      await as(seller2).post("/api/sequences", { name: "Dashboard" })
+    ).body;
+    await as(seller2).post(`/api/sequences/${sequence.id}/steps`, {
+      type: "phone_call",
+      title: "Call",
+    });
+    const person = (n: number) => ({
+      firstName: "Dee",
+      lastName: `Ash${n}`,
+      email: `dee${n}@dash.example`,
+    });
+    for (const n of [1, 2]) {
+      const lead = (await as(seller2).post("/api/leads", person(n))).body;
+      await as(seller2).post(`/api/sequences/${sequence.id}/enrollments`, {
+        leadId: lead.id,
+      });
+    }
+    const replied = (await as(seller2).post("/api/leads", person(3))).body;
+    const enrolled = (
+      await as(seller2).post(`/api/sequences/${sequence.id}/enrollments`, {
+        leadId: replied.id,
+      })
+    ).body;
+    await as(seller2).post(`/api/enrollments/${enrolled.enrollment.id}/stop`, {
+      reason: "replied",
+    });
+    await as(seller2).post("/api/activities", {
+      type: "call",
+      subject: "Left voicemail",
+      leadId: replied.id,
+    });
+
+    await as(seller2).post("/api/opportunities", {
+      name: "Open A",
+      accountId: account.id,
+      amount: 1000,
+      status: "Proposal",
+    });
+    await as(seller2).post("/api/opportunities", {
+      name: "Open B",
+      accountId: account.id,
+      amount: 500,
+      status: "Proposal",
+    });
+    const thisMonth =
+      (await as(seller2).get("/api/dashboard")).body.today.slice(0, 8) + "28";
+    await as(seller2).post("/api/opportunities", {
+      name: "Closing",
+      accountId: account.id,
+      amount: 250,
+      closeDate: thisMonth,
+    });
+    await as(seller2).post("/api/opportunities", {
+      name: "Won",
+      accountId: account.id,
+      amount: 4000,
+      status: "Closed Won",
+    });
+    await as(seller).post("/api/opportunities", {
+      name: "Someone else's",
+      accountId: account.id,
+      amount: 99999,
+    });
+
+    const dash = (await as(seller2).get("/api/dashboard")).body;
+    expect(dash.owner).toBe(seller2.userId);
+    expect(dash.steps).toEqual({ dueToday: 2, overdue: 0 });
+    expect(dash.activityThisWeek).toMatchObject({ call: 1, email: 0 });
+    expect(dash.sequences).toEqual({
+      inSequence: 2,
+      last30Days: { replied: 1, meetingBooked: 0, finished: 0, optedOut: 0 },
+    });
+    expect(
+      dash.pipeline.byStage.sort((a: { stage: string }, b: { stage: string }) =>
+        a.stage.localeCompare(b.stage),
+      ),
+    ).toEqual([
+      { stage: "Proposal", count: 2, amount: 1500 },
+      { stage: "Prospecting", count: 1, amount: 250 },
+    ]);
+    expect(dash.pipeline.closingThisMonth).toEqual({ count: 1, amount: 250 });
+    expect(dash.pipeline.wonLast30Days).toEqual({ count: 1, amount: 4000 });
+    expect(dash.recentActivity[0]).toMatchObject({
+      subject: "Left voicemail",
+      personName: "Dee Ash3",
+    });
+
+    // A rep sees only their own; an admin can see one rep or everyone.
+    expect((await as(seller2).get("/api/dashboard?owner=all")).status).toBe(
+      403,
+    );
+    expect(
+      (await as(seller2).get(`/api/dashboard?owner=${seller.userId}`)).status,
+    ).toBe(403);
+    const theirs = (
+      await as(boss).get(`/api/dashboard?owner=${seller2.userId}`)
+    ).body;
+    expect(theirs.steps).toEqual(dash.steps);
+    const everyone = (await as(boss).get("/api/dashboard?owner=all")).body;
+    const openTotal = everyone.pipeline.byStage.reduce(
+      (sum: number, r: { amount: number }) => sum + r.amount,
+      0,
+    );
+    expect(openTotal).toBeGreaterThanOrEqual(1750 + 99999);
+    expect(
+      (await as(boss).get(`/api/dashboard?owner=${outsider.userId}`)).status,
+    ).toBe(400);
+  });
+});
+
 describe("organizations are isolated over the API", () => {
   it("hides one organization's records from another", async () => {
     const lead = (await as(rep).post("/api/leads", newLead({ lastName: "Private" }))).body;

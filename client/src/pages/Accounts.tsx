@@ -1,4 +1,5 @@
 import { AccountRelated } from "@/components/AccountRelated";
+import { ActivityTimeline } from "@/components/ActivityTimeline";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ImportButton } from "@/components/ImportRecords";
@@ -60,6 +61,13 @@ export function AccountsPage() {
         ) : undefined
       }
       related={(a) => <AccountRelated accountId={a.id} />}
+      tabs={[
+        {
+          value: "activity",
+          label: "Activity",
+          render: (r) => <ActivityTimeline about={{ accountId: r.id }} />,
+        },
+      ]}
       describe={(a) => a.name}
     />
   );

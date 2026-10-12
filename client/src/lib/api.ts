@@ -128,7 +128,14 @@ export function useStatuses() {
   });
 }
 
-type ObjectName = "leads" | "contacts" | "accounts" | "opportunities" | "templates" | "sequences";
+type ObjectName =
+  | "leads"
+  | "contacts"
+  | "accounts"
+  | "opportunities"
+  | "activities"
+  | "templates"
+  | "sequences";
 
 /** Mirrors the server's checks so the screens only offer what will succeed. */
 export function permissionsFor(me: Me | undefined, object: ObjectName) {
@@ -153,4 +160,23 @@ export function canUse(me: Me | undefined, tool: string): boolean {
 /** Admin screens are for people who manage the organization's settings or users. */
 export function isAdmin(me: Me | undefined): boolean {
   return canUse(me, "setup.org_settings") || canUse(me, "account.users_and_roles");
+}
+
+export type ActivityType = "call" | "email" | "linkedin" | "meeting" | "note";
+export interface Activity {
+  id: string;
+  type: ActivityType;
+  subject: string | null;
+  body: string | null;
+  occurredAt: string;
+  ownerId: string;
+  ownerName: string | null;
+  leadId: string | null;
+  contactId: string | null;
+  accountId: string | null;
+  opportunityId: string | null;
+  fromSequence: boolean;
+  personName: string | null;
+  accountName: string | null;
+  opportunityName: string | null;
 }
