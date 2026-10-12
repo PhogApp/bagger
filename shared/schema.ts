@@ -146,6 +146,74 @@ export const statusOptions = pgTable(
   ],
 );
 
+/** The record types that can have custom fields. */
+export const CUSTOM_FIELD_OBJECTS = ["leads", "contacts", "accounts", "opportunities"] as const;
+export type CustomFieldObject = (typeof CUSTOM_FIELD_OBJECTS)[number];
+export const CUSTOM_FIELD_TYPES = [
+  "text",
+  "longtext",
+  "number",
+  "currency",
+  "date",
+  "checkbox",
+  "picklist",
+  "multipicklist",
+  "url",
+  "email",
+  "phone",
+  "user",
+] as const;
+export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number];
+
+/**
+ * A field an organization adds to one record type. Values are stored on the
+ * record under `custom[key]`. The key is fixed when the field is made, so
+ * renaming the label never breaks templates, imports or reports.
+ */
+export const customFields = pgTable(
+  "custom_fields",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    object: text("object").$type<CustomFieldObject>().notNull(),
+    key: text("key").notNull(),
+    label: text("label").notNull(),
+    type: text("type").$type<CustomFieldType>().notNull(),
+    /** Must be filled in on the Add form and the record page. Not enforced on import. */
+    required: boolean("required").notNull().default(false),
+    /** The choices, for picklists. */
+    options: jsonb("options").$type<string[]>().notNull().default([]),
+    /** Hidden everywhere; the values are kept and come back if it is restored. */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("custom_fields_org_object_key_uq").on(t.orgId, t.object, t.key)],
+);
+
+export interface LayoutEntry {
+  /** A built-in field name such as "website", or "custom.<key>". */
+  field: string;
+  width: "third" | "half" | "full";
+  hidden?: boolean;
+}
+
+/** How one record type's page is laid out for an organization: order, width, hidden. */
+export const fieldLayouts = pgTable(
+  "field_layouts",
+  {
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    object: text("object").$type<CustomFieldObject>().notNull(),
+    entries: jsonb("entries").$type<LayoutEntry[]>().notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("field_layouts_org_object_uq").on(t.orgId, t.object)],
+);
+
 export const roles = pgTable(
   "roles",
   {
@@ -211,6 +279,8 @@ export const leads = pgTable(
     status: text("status").notNull(),
     convertedContactId: uuid("converted_contact_id"),
     convertedAt: timestamp("converted_at", { withTimezone: true }),
+    /** Values of the organization's custom fields, by field key. */
+    custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
@@ -235,6 +305,8 @@ export const accounts = pgTable(
     notes: text("notes"),
     /** One of the organization's status options for accounts. */
     status: text("status").notNull(),
+    /** Values of the organization's custom fields, by field key. */
+    custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
@@ -266,6 +338,8 @@ export const contacts = pgTable(
     notes: text("notes"),
     /** One of the organization's status options for this kind of record. */
     status: text("status").notNull(),
+    /** Values of the organization's custom fields, by field key. */
+    custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
@@ -302,6 +376,8 @@ export const opportunities = pgTable(
     notes: text("notes"),
     /** Set while the stage is a won or lost one; null while the deal is open. */
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** Values of the organization's custom fields, by field key. */
+    custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),

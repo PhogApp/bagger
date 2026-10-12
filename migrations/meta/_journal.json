@@ -43,6 +43,13 @@
       "when": 1791808259537,
       "tag": "0005_activities",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791826335951,
+      "tag": "0006_custom_fields",
+      "breakpoints": true
     }
   ]
 }

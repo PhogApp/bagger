@@ -3,6 +3,7 @@ import { Columns3, List } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
 import { RecordDetail } from "@/components/RecordDetail";
+import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge, STATUS_TONES } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -61,7 +62,7 @@ function useOpportunityFields(): Field[] {
   const { data: statuses } = useStatuses();
   const { accounts, accountName } = useAccountPicker();
   const { contacts } = useContactPicker();
-  return [
+  return useLayout("opportunities", [
     { name: "name", label: "Opportunity Name", required: true, span: 6 },
     {
       name: "accountId",
@@ -85,7 +86,7 @@ function useOpportunityFields(): Field[] {
     { ...statusField(statuses, "opportunities"), label: "Stage", span: 2 },
     ownerField(users),
     { name: "notes", label: "Notes", kind: "textarea", span: 6 },
-  ];
+  ]);
 }
 
 export function OpportunitiesPage() {

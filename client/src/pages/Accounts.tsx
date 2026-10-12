@@ -1,6 +1,7 @@
 import { AccountRelated } from "@/components/AccountRelated";
 import { ImportButton } from "@/components/ImportRecords";
 import { RecordDetail } from "@/components/RecordDetail";
+import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useMe, useOrgUsers, useStatuses } from "@/lib/api";
@@ -20,7 +21,7 @@ export interface Account {
 function useAccountFields(): Field[] {
   const { data: users } = useOrgUsers();
   const { data: statuses } = useStatuses();
-  return [
+  return useLayout("accounts", [
     { name: "name", label: "Account Name", required: true, span: 6 },
     { name: "website", label: "Website", kind: "url", placeholder: "www.company.com" },
     {
@@ -33,7 +34,7 @@ function useAccountFields(): Field[] {
     { ...statusField(statuses, "accounts"), span: 2 },
     { ...ownerField(users), span: 2 },
     { name: "notes", label: "Notes", kind: "textarea", span: 6 },
-  ];
+  ]);
 }
 
 export function AccountsPage() {

@@ -3,7 +3,7 @@ import { ArrowLeft, Check, Pencil } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { ActivityTimeline, type ActivityAbout } from "@/components/ActivityTimeline";
-import { History, type Field } from "@/components/RecordPage";
+import { asText, History, MultiSelect, toBody, valueOf, type Field } from "@/components/RecordPage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,7 +55,8 @@ const SPAN = { 2: "sm:col-span-2", 3: "sm:col-span-3", 6: "sm:col-span-6" } as c
 
 /** How a stored value reads, by the kind of field. */
 function shown(field: Field, raw: unknown): ReactNode {
-  const value = raw === null || raw === undefined ? "" : String(raw);
+  if (field.format) return field.format(raw);
+  const value = asText(raw);
   if (value === "") return null;
   switch (field.kind) {
     case "select":
@@ -102,8 +103,7 @@ function InlineField<T extends Row>(props: {
   save: (value: string) => Promise<void>;
 }) {
   const { field, row } = props;
-  const stored =
-    row[field.name] === null || row[field.name] === undefined ? "" : String(row[field.name]);
+  const stored = asText(valueOf(row, field.name));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(stored);
   const [error, setError] = useState<string | null>(null);
@@ -172,7 +172,7 @@ function InlineField<T extends Row>(props: {
     }
   };
 
-  const reading = props.display?.(row) ?? shown(field, row[field.name]);
+  const reading = props.display?.(row) ?? shown(field, valueOf(row, field.name));
 
   return (
     <div className={cn("col-span-6 min-w-0", SPAN[field.span ?? 3])}>
@@ -189,7 +189,31 @@ function InlineField<T extends Row>(props: {
       </label>
       {editing ? (
         <div className="mt-1 space-y-1">
-          {field.kind === "select" ? (
+          {field.kind === "multiselect" ? (
+            <div
+              onBlur={(e) => {
+                // Save once focus leaves the whole group of ticks.
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) void commit(draft);
+              }}
+              onKeyDown={onKey}
+            >
+              <MultiSelect
+                id={id}
+                options={field.options ?? []}
+                value={draft}
+                disabled={saving}
+                onChange={setDraft}
+              />
+              <div className="flex gap-2">
+                <Button size="sm" disabled={saving} onClick={() => void commit(draft)}>
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={cancel}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : field.kind === "select" ? (
             <select
               id={id}
               ref={box}
@@ -231,7 +255,9 @@ function InlineField<T extends Row>(props: {
                   ? field.kind
                   : "text"
               }
-              inputMode={field.kind === "url" ? "url" : undefined}
+              inputMode={
+                field.kind === "url" ? "url" : field.kind === "number" ? "decimal" : undefined
+              }
               placeholder={field.placeholder}
               value={draft}
               disabled={saving}
@@ -328,7 +354,7 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     await queryClient.invalidateQueries({ queryKey: ["history", props.recordType, props.id] });
   };
   const patch = async (name: string, value: unknown) =>
-    refresh(await api<T>("PATCH", `/api/${props.object}/${props.id}`, { [name]: value }));
+    refresh(await api<T>("PATCH", `/api/${props.object}/${props.id}`, toBody({ [name]: value })));
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const remove = useMutation({
@@ -349,7 +375,8 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     </Link>
   );
 
-  if (record.isLoading || goTo) return <p className="p-8 text-sm text-muted-foreground">Loading…</p>;
+  if (record.isLoading || goTo)
+    return <p className="p-8 text-sm text-muted-foreground">Loading…</p>;
   if (record.error || !record.data) {
     const gone = record.error instanceof ApiError && record.error.status === 404;
     return (
@@ -443,7 +470,7 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
                     props.confirm ? (value) => props.confirm!(field.name, value, row) : undefined
                   }
                   save={async (value) => {
-                    const before = row[field.name];
+                    const before = valueOf(row, field.name);
                     await patch(field.name, field.parse ? field.parse(value) : value);
                     setUndo({ field, value: before ?? "" });
                   }}

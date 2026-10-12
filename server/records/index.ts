@@ -13,6 +13,7 @@ import {
 import { ValidationError } from "../errors";
 import { stopForPerson } from "../sequences/engine";
 import { accountMatches, personMatches } from "./duplicates";
+import { customInput } from "../fields/service";
 import { statusEffect } from "../statuses/service";
 import { recordService } from "./service";
 
@@ -53,6 +54,7 @@ const personFields = {
   notes: optionalText,
   status,
   ownerId,
+  custom: customInput,
 };
 
 export const leadInput = z.object({ ...personFields, company: optionalText });
@@ -65,6 +67,7 @@ export const accountInput = z.object({
   notes: optionalText,
   status,
   ownerId,
+  custom: customInput,
 });
 /** Money as typed ("12,500", "$12500.50") or as a number; stored with two decimals. */
 const optionalAmount = z
@@ -105,6 +108,7 @@ export const opportunityInput = z.object({
   status,
   notes: optionalText,
   ownerId,
+  custom: customInput,
 });
 export const templateInput = z.object({
   name: text,
@@ -125,6 +129,7 @@ export const leadService = recordService<typeof leads.$inferSelect, typeof leadI
   object: "leads",
   recordType: "lead",
   statusObject: "leads",
+  customObject: "leads",
   input: leadInput,
   search: [leads.firstName, leads.lastName, leads.email, leads.company, leads.cellPhone],
   orderBy: [leads.lastName, leads.firstName],
@@ -149,6 +154,7 @@ export const accountService = recordService<typeof accounts.$inferSelect, typeof
   object: "accounts",
   recordType: "account",
   statusObject: "accounts",
+  customObject: "accounts",
   input: accountInput,
   search: [accounts.name, accounts.website],
   orderBy: [accounts.name],
@@ -178,6 +184,7 @@ export const contactService = recordService<typeof contacts.$inferSelect, typeof
   object: "contacts",
   recordType: "contact",
   statusObject: "contacts",
+  customObject: "contacts",
   filters: { accountId: contacts.accountId },
   input: contactInput,
   search: [contacts.firstName, contacts.lastName, contacts.email, contacts.cellPhone],
@@ -237,6 +244,7 @@ export const opportunityService = recordService<
   object: "opportunities",
   recordType: "opportunity",
   statusObject: "opportunities",
+  customObject: "opportunities",
   filters: { accountId: opportunities.accountId },
   input: opportunityInput,
   search: [opportunities.name],

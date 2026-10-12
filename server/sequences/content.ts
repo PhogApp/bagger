@@ -13,6 +13,10 @@ export interface MergePerson {
   email: string;
   title?: string | null;
   company?: string | null;
+  /** The person's custom field values, for {custom.<key>}. */
+  custom?: Record<string, unknown>;
+  /** A contact's account's custom field values, for {account.<key>}. */
+  accountCustom?: Record<string, unknown>;
 }
 
 export interface ContentSources {
@@ -36,10 +40,26 @@ const FIELDS: Record<string, (p: MergePerson) => string> = {
   company: (p) => p.company ?? "",
 };
 
-/** Replace {firstName}-style fields. Unknown fields are left untouched. */
+function shown(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+/**
+ * Replace {firstName}-style fields, plus {custom.<key>} for the person's
+ * custom fields and {account.<key>} for their account's. A custom field with
+ * no value becomes empty; anything unknown is left untouched.
+ */
 export function applyMergeFields(text: string, person: MergePerson): string {
-  return text.replace(/\{(\w+)\}/g, (whole, name: string) => {
-    const fill = FIELDS[name.toLowerCase()];
+  return text.replace(/\{(\w+)(?:\.(\w+))?\}/g, (whole, first: string, key?: string) => {
+    if (key) {
+      const values =
+        first === "custom" ? person.custom : first === "account" ? person.accountCustom : undefined;
+      return values ? shown(values[key]) : whole;
+    }
+    const fill = FIELDS[first.toLowerCase()];
     return fill ? fill(person) : whole;
   });
 }
