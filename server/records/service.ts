@@ -54,6 +54,11 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   /** Text columns (or expressions) matched by the `q` search parameter. */
   search: (AnyPgColumn | SQL)[];
   orderBy: AnyPgColumn[];
+  /**
+   * Adjust values before they are checked and saved, e.g. clean a template's
+   * message for its type. `before` is set on update.
+   */
+  prepare?: (values: Record<string, unknown>, before?: TRow) => void;
   /** Check references (for example, that an account is in this org). */
   validate?: (tx: Db, actor: Actor, values: Partial<z.infer<TSchema>>) => Promise<void>;
   /** Set when the record type can have custom fields. */
@@ -262,6 +267,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         throw new PermissionError(`${cfg.object}.create`);
       }
       const values = cfg.input.parse(raw) as Input;
+      cfg.prepare?.(values as Record<string, unknown>);
       return db.transaction(async (tx) => {
         await checkOwner(tx, actor, values.ownerId);
         await cfg.validate?.(tx, actor, values);
@@ -298,6 +304,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         requireRecord(actor.permissions, cfg.object, "edit", before, actor.userId);
         const frozen = cfg.frozen?.(before);
         if (frozen) throw new ValidationError(frozen);
+        cfg.prepare?.(patch as Record<string, unknown>, before);
 
         await settleStatus(tx, actor, patch, false);
         // Custom values merge into what the record has, and get a history line each.

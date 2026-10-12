@@ -38,3 +38,39 @@
     @apply text-brand-deep;
   }
 }
+
+/* Email messages: the formatted text in the editor, previews and Run Steps. */
+@layer components {
+  .rich-text {
+    @apply text-sm leading-relaxed;
+  }
+  .rich-text p {
+    @apply my-0;
+  }
+  .rich-text p + p,
+  .rich-text p + ul,
+  .rich-text p + ol,
+  .rich-text ul + p,
+  .rich-text ol + p {
+    @apply mt-3;
+  }
+  .rich-text ul {
+    @apply list-disc pl-5;
+  }
+  .rich-text ol {
+    @apply list-decimal pl-5;
+  }
+  .rich-text li p {
+    @apply my-0;
+  }
+  .rich-text a {
+    @apply text-primary underline;
+  }
+  .rich-text .ProseMirror {
+    @apply min-h-32 outline-none;
+  }
+  .rich-text .ProseMirror p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    @apply pointer-events-none float-left h-0 text-muted-foreground;
+  }
+}

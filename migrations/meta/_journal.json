@@ -64,6 +64,13 @@
       "when": 1791835722351,
       "tag": "0008_activity_status",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791844113553,
+      "tag": "0009_rich_text_messages",
+      "breakpoints": true
     }
   ]
 }

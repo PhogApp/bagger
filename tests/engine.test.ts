@@ -308,7 +308,8 @@ describe("templates and per-person edits", () => {
     const { task } = await setup();
     await setTaskOverride(db, ctx, task.id, { body: "Saw your note, {firstName}." });
     const view = await getTask(db, ctx, task.id);
-    expect(view.content.body).toBe("Saw your note, Jill.");
+    // Email messages are stored as HTML.
+    expect(view.content.body).toBe("<p>Saw your note, Jill.</p>");
     expect(view.content.subject).toBe("Hello Jill"); // subject still from the template
     expect(view.content.edited).toBe(true);
     // Clearing the edit goes back to the template.

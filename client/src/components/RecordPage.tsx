@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import {
   BulkChanges,
   ColumnPicker,
@@ -46,6 +47,7 @@ import {
 import { customFieldAsField, useFieldSetup, type LayoutObject } from "@/lib/fields";
 import { count, toast } from "@/lib/toast";
 import { cn, formatDateTime } from "@/lib/utils";
+import { htmlToText } from "../../../shared/richtext";
 
 /**
  * One list-and-edit screen, used for leads, contacts and accounts. Each page
@@ -62,7 +64,16 @@ export interface Field {
   name: string;
   label: string;
   kind?:
-    "text" | "number" | "email" | "tel" | "url" | "date" | "textarea" | "select" | "multiselect";
+    | "text"
+    | "number"
+    | "email"
+    | "tel"
+    | "url"
+    | "date"
+    | "textarea"
+    | "select"
+    | "multiselect"
+    | "richtext";
   required?: boolean;
   options?: Option[];
   placeholder?: string;
@@ -273,6 +284,8 @@ function FieldInput({
           disabled={disabled}
           onChange={onChange}
         />
+      ) : field.kind === "richtext" ? (
+        <RichTextEditor id={id} value={value} onChange={onChange} disabled={disabled} />
       ) : field.kind === "textarea" ? (
         <Textarea
           id={id}
@@ -341,7 +354,8 @@ export function History({
   const show = (fieldName: string | null, value: string | null) => {
     if (value === null || value === "") return "empty";
     const option = byName.get(fieldName ?? "")?.options?.find((o) => o.value === value);
-    return option?.label ?? value;
+    // A formatted message reads as its words here.
+    return option?.label ?? htmlToText(value);
   };
 
   return (

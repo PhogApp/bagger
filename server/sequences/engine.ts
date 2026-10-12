@@ -16,7 +16,9 @@ import {
   users,
 } from "../../shared/schema";
 import type { Ctx, Db } from "../db/types";
+import { htmlToText } from "../../shared/richtext";
 import { resolveContent, type MergePerson, type ResolvedContent } from "./content";
+import { messageFor, stepKind } from "./html";
 import { addWaitDays, localDate, type WaitDayMode } from "./dates";
 
 /**
@@ -428,7 +430,9 @@ async function logStepActivity(
       .where(eq(contacts.id, enrollment.contactId));
     accountId = contact?.accountId ?? null;
   }
-  const body = [content?.body, note ? `Note: ${note}` : null].filter(Boolean).join("\n\n");
+  // The activity log is plain text; an email's HTML becomes readable text there.
+  const sent = content?.body ? htmlToText(content.body) : null;
+  const body = [sent, note ? `Note: ${note}` : null].filter(Boolean).join("\n\n");
   await tx.insert(activities).values({
     orgId: ctx.orgId,
     ownerId: ctx.userId,
@@ -476,11 +480,16 @@ export async function setTaskOverride(
   await db.transaction(async (tx) => {
     const task = await lockTask(tx, ctx, taskId);
     if (task.state !== "open") throw new SequenceError("task_not_open");
+    const [step] = await tx
+      .select({ type: sequenceSteps.type })
+      .from(sequenceSteps)
+      .where(eq(sequenceSteps.id, task.stepId));
+    const body = messageFor(stepKind(step.type), override.body);
     await tx
       .update(stepTasks)
       .set({
         overrideSubject: override.subject === undefined ? task.overrideSubject : override.subject,
-        overrideBody: override.body === undefined ? task.overrideBody : override.body,
+        overrideBody: body === undefined ? task.overrideBody : body,
       })
       .where(eq(stepTasks.id, task.id));
   });
@@ -770,6 +779,7 @@ async function loadTaskViews(
           template: r.template,
         },
         person,
+        r.step.type === "email",
       ),
     };
   });

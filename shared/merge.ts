@@ -1,3 +1,5 @@
+import { escapeHtml } from "./richtext";
+
 /**
  * Merge fields in templates and steps: {firstName}, {lastName}, {email},
  * {title}, {company}, {custom.<key>} and {account.<key>}. Shared so the
@@ -36,14 +38,20 @@ function shown(value: unknown): string {
  * custom fields and {account.<key>} for their account's. A custom field with
  * no value becomes empty; anything unknown is left untouched.
  */
-export function applyMergeFields(text: string, person: MergePerson): string {
+export function applyMergeFields(
+  text: string,
+  person: MergePerson,
+  options: { html?: boolean } = {},
+): string {
+  // In an email's HTML, a value such as "Smith & Sons" must stay text.
+  const out = (value: string) => (options.html ? escapeHtml(value) : value);
   return text.replace(/\{(\w+)(?:\.(\w+))?\}/g, (whole, first: string, key?: string) => {
     if (key) {
       const values =
         first === "custom" ? person.custom : first === "account" ? person.accountCustom : undefined;
-      return values ? shown(values[key]) : whole;
+      return values ? out(shown(values[key])) : whole;
     }
     const fill = FIELDS[first.toLowerCase()];
-    return fill ? fill(person) : whole;
+    return fill ? out(fill(person)) : whole;
   });
 }

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { applyMergeFields } from "../../../shared/merge";
 import { RecordDetail } from "@/components/RecordDetail";
+import { RichText } from "@/components/RichTextEditor";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApi, useMe, useOrgUsers, type OrgUser } from "@/lib/api";
@@ -24,7 +25,7 @@ export const MERGE_FIELD_HELP =
 
 const TYPE_LABEL = { email: "Email", linkedin: "LinkedIn" } as const;
 
-function templateFields(users: OrgUser[] | undefined): Field[] {
+function templateFields(users: OrgUser[] | undefined, type: Template["type"] = "email"): Field[] {
   return [
     { name: "name", label: "Template Name", required: true },
     {
@@ -46,11 +47,15 @@ function templateFields(users: OrgUser[] | undefined): Field[] {
     {
       name: "body",
       label: "Message",
-      kind: "textarea",
+      // Email messages are formatted; LinkedIn has no formatting.
+      kind: type === "email" ? "richtext" : "textarea",
       required: true,
       span: 6,
       rows: 10,
-      help: MERGE_FIELD_HELP,
+      help:
+        type === "email"
+          ? MERGE_FIELD_HELP
+          : `${MERGE_FIELD_HELP} LinkedIn messages are plain text.`,
     },
     ownerField(users),
   ];
@@ -132,7 +137,11 @@ function Preview({ t }: { t: Template }) {
             <span className="font-medium">{t.subject ? fill(t.subject) : "(no subject)"}</span>
           </p>
         )}
-        <p className="whitespace-pre-line">{fill(t.body)}</p>
+        {t.type === "email" ? (
+          <RichText html={applyMergeFields(t.body, SAMPLE, { html: true })} />
+        ) : (
+          <p className="whitespace-pre-line">{fill(t.body)}</p>
+        )}
       </div>
     </section>
   );
@@ -188,7 +197,13 @@ function UsedIn({ id }: { id: string }) {
 }
 
 export function TemplateDetailPage({ params }: { params: { id: string } }) {
+  const api = useApi();
   const { data: users } = useOrgUsers();
+  // The same query the page itself runs: the message's editor depends on the type.
+  const current = useQuery({
+    queryKey: ["templates", "one", params.id],
+    queryFn: () => api<Template>("GET", `/api/templates/${params.id}`),
+  });
   return (
     <RecordDetail<Template & Record<string, unknown>>
       object="templates"
@@ -196,7 +211,7 @@ export function TemplateDetailPage({ params }: { params: { id: string } }) {
       id={params.id}
       listHref="/templates"
       listLabel="Templates"
-      fields={templateFields(users)}
+      fields={templateFields(users, current.data?.type)}
       title={(t) => t.name}
       subtitle={(t) => `${TYPE_LABEL[t.type]} template · Owner: ${nameOf(users, t.ownerId)}`}
       below={(t) => (

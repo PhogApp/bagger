@@ -26,6 +26,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { canUse, useApi, useMe } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { RichText, RichTextEditor } from "@/components/RichTextEditor";
+import { htmlToText } from "../../../shared/richtext";
 import { formatDate, formatDay, formatPhone } from "@/lib/utils";
 
 type StepType = "email" | "phone_call" | "linkedin_connect" | "linkedin_message";
@@ -69,7 +71,29 @@ function today(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function CopyRow({ label, value }: { label: string; value: string }) {
+/**
+ * Copy as formatted text where the browser allows, so pasting into Gmail or
+ * Outlook keeps bold, links and lists; plain text goes along for other apps.
+ */
+async function copyMessage(html: string) {
+  const plain = htmlToText(html);
+  if (typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([plain], { type: "text/plain" }),
+        }),
+      ]);
+      return;
+    } catch {
+      // Fall through to plain text.
+    }
+  }
+  await navigator.clipboard.writeText(plain);
+}
+
+function CopyRow({ label, value, html }: { label: string; value: string; html?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
     <div>
@@ -82,8 +106,14 @@ function CopyRow({ label, value }: { label: string; value: string }) {
           variant="ghost"
           className="h-7 px-2 text-xs"
           onClick={async () => {
-            await navigator.clipboard.writeText(value);
-            setCopied(true);
+            try {
+              if (html) await copyMessage(value);
+              else await navigator.clipboard.writeText(value);
+              setCopied(true);
+            } catch {
+              toast.error("Couldn't copy. Select the text and copy it instead.");
+              return;
+            }
             setTimeout(() => setCopied(false), 1500);
           }}
         >
@@ -91,7 +121,11 @@ function CopyRow({ label, value }: { label: string; value: string }) {
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>
-      <p className="whitespace-pre-wrap break-words text-sm">{value}</p>
+      {html ? (
+        <RichText html={value} className="break-words" />
+      ) : (
+        <p className="whitespace-pre-wrap break-words text-sm">{value}</p>
+      )}
     </div>
   );
 }
@@ -311,12 +345,20 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
                   )}
                   <div className="space-y-1">
                     <Label htmlFor="run-body">Message</Label>
-                    <Textarea
-                      id="run-body"
-                      rows={10}
-                      value={draft.body}
-                      onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-                    />
+                    {task.step.type === "email" ? (
+                      <RichTextEditor
+                        id="run-body"
+                        value={draft.body}
+                        onChange={(body) => setDraft({ ...draft, body })}
+                      />
+                    ) : (
+                      <Textarea
+                        id="run-body"
+                        rows={10}
+                        value={draft.body}
+                        onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+                      />
+                    )}
                   </div>
                   <div className="flex gap-2">
                     <Button
@@ -350,6 +392,7 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
                   <CopyRow
                     label={task.step.type === "email" ? "Email body" : "Message"}
                     value={task.content.body ?? ""}
+                    html={task.step.type === "email"}
                   />
                   <div className="flex items-center gap-2 pt-1">
                     <Button

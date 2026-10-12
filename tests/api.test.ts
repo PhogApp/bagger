@@ -1536,6 +1536,42 @@ describe("template and sequence pages", () => {
     expect((await as(boss).del(`/api/sequences/${sequence.id}`)).status).toBe(204);
   });
 
+  it("keeps email messages as clean HTML and LinkedIn ones as plain text", async () => {
+    const t = (
+      await as(seller).post("/api/templates", {
+        name: "Rich",
+        type: "email",
+        subject: "Hi {firstName}",
+        body: '<p>Hi <strong>{firstName}</strong> <script>x()</script><a href="https://phog.ai">site</a></p><ul><li>One</li></ul>',
+      })
+    ).body;
+    expect(t.body).toBe(
+      '<p>Hi <strong>{firstName}</strong> <a href="https://phog.ai" target="_blank" rel="noopener noreferrer">site</a></p><ul><li>One</li></ul>',
+    );
+    expect((await as(seller).post("/api/templates", { name: "Empty", type: "email", body: "<p></p>" })).status).toBe(400);
+    // Switching to LinkedIn drops the formatting; switching back makes paragraphs again.
+    const li = (await as(seller).patch(`/api/templates/${t.id}`, { type: "linkedin" })).body;
+    expect(li.body).toBe("Hi {firstName} site (https://phog.ai)\n\n• One");
+    const back = (await as(seller).patch(`/api/templates/${t.id}`, { type: "email" })).body;
+    expect(back.body).toBe("<p>Hi {firstName} site (https://phog.ai)</p><p>• One</p>");
+
+    // A sent email is logged on the person's activity as readable text, merge values escaped in HTML.
+    const sequence = (await as(seller).post("/api/sequences", { name: "Rich run" })).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, {
+      type: "email",
+      title: "Rich",
+      subject: "For {company}",
+      body: "<p>Hello <em>{company}</em></p>",
+    });
+    const lead = (await as(seller).post("/api/leads", newLead({ email: "rich@example.com", company: "Smith & Sons" }))).body;
+    const enrolled = (await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: lead.id })).body;
+    const task = (await as(seller).get(`/api/tasks/${enrolled.task.id}`)).body;
+    expect(task.content).toMatchObject({ subject: "For Smith & Sons", body: "<p>Hello <em>Smith &amp; Sons</em></p>" });
+    await as(seller).post(`/api/tasks/${enrolled.task.id}/complete`, {});
+    const logged = (await as(seller).get(`/api/activities?leadId=${lead.id}`)).body;
+    expect(logged[0]).toMatchObject({ subject: "For Smith & Sons", body: "Hello Smith & Sons" });
+  });
+
   it("sorts and searches the template and sequence lists", async () => {
     for (const name of ["Zulu", "Mike", "Bravo"]) {
       await as(seller).post("/api/templates", { name: `${name} sort`, type: "email", subject: name, body: "x" });
@@ -1744,7 +1780,7 @@ describe("custom fields and record layouts", () => {
     });
     const enrolled = (await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { contactId: contact.id })).body;
     const task = (await as(seller).get(`/api/tasks/${enrolled.task.id}`)).body;
-    expect(task.content).toMatchObject({ subject: "Cy in Hospitality", body: "As a Gold customer… " });
+    expect(task.content).toMatchObject({ subject: "Cy in Hospitality", body: "<p>As a Gold customer… </p>" });
   });
 });
 
@@ -2137,28 +2173,28 @@ describe("building and running a sequence", () => {
     const task = queue.find((t: { person: { leadId: string } }) => t.person.leadId === lead.id);
     expect(task.content).toMatchObject({
       subject: "Hello Jill",
-      body: "Thought of Redfield Energy.",
+      body: "<p>Thought of Redfield Energy.</p>",
       edited: false,
     });
 
     // Editing the template updates the open task.
     await as(rep).patch(`/api/templates/${template.id}`, { body: "New body for {company}." });
     expect((await as(rep).get(`/api/tasks/${task.taskId}`)).body.content.body).toBe(
-      "New body for Redfield Energy.",
+      "<p>New body for Redfield Energy.</p>",
     );
 
     // The rep personalizes this one message before sending.
     const edited = await as(rep).put(`/api/tasks/${task.taskId}/message`, {
       body: "Saw your note about the audit, {firstName}.",
     });
-    expect(edited.body.content.body).toBe("Saw your note about the audit, Jill.");
+    expect(edited.body.content.body).toBe("<p>Saw your note about the audit, Jill.</p>");
 
     const done = await as(rep).post(`/api/tasks/${task.taskId}/complete`, { note: "Sent" });
     expect(done.status).toBe(200);
     expect(done.body.nextTask.stepId).toBe(s2.id);
 
     const [saved] = await db.select().from(s.stepTasks).where(eq(s.stepTasks.id, task.taskId));
-    expect(saved.finalBody).toBe("Saw your note about the audit, Jill.");
+    expect(saved.finalBody).toBe("<p>Saw your note about the audit, Jill.</p>");
 
     // The call is not due yet, so it is not in the queue.
     const later = (await as(rep).get("/api/tasks/due")).body;
