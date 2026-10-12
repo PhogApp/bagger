@@ -124,6 +124,8 @@ export function LeadDetailPage({ params }: { params: { id: string } }) {
       badge={(l) => (
         <StatusBadge status={l.status} color={statusColor(statuses, "leads", l.status)} />
       )}
+      // A converted lead lives on as its contact; old links go there.
+      redirect={(l) => (l.convertedContactId ? `/contacts/${l.convertedContactId}` : null)}
       frozen={(l) =>
         l.convertedContactId ? (
           <>

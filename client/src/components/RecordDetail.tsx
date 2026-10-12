@@ -37,6 +37,8 @@ export interface RecordDetailProps<T extends Row> {
   /** Under the fields, e.g. an account's contacts and opportunities. */
   below?: (row: T) => ReactNode;
   activity: (row: T) => ActivityAbout;
+  /** Where to send someone who opens this record instead, e.g. a converted lead's contact. */
+  redirect?: (row: T) => string | null;
   /** When set, the record can't be changed and this says why. */
   frozen?: (row: T) => ReactNode | null;
   /** How a field reads when it isn't being edited, when plain text won't do. */
@@ -307,6 +309,11 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     queryFn: () => api<T>("GET", `/api/${props.object}/${props.id}`),
   });
 
+  const goTo = record.data ? (props.redirect?.(record.data) ?? null) : null;
+  useEffect(() => {
+    if (goTo) navigate(goTo, { replace: true });
+  }, [goTo, navigate]);
+
   // The last change, so it can be put back.
   const [undo, setUndo] = useState<{ field: Field; value: unknown } | null>(null);
   useEffect(() => {
@@ -342,7 +349,7 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     </Link>
   );
 
-  if (record.isLoading) return <p className="p-8 text-sm text-muted-foreground">Loading…</p>;
+  if (record.isLoading || goTo) return <p className="p-8 text-sm text-muted-foreground">Loading…</p>;
   if (record.error || !record.data) {
     const gone = record.error instanceof ApiError && record.error.status === 404;
     return (
