@@ -221,6 +221,7 @@ export async function activityReport(db: Db, actor: Actor, raw: unknown) {
   const where = and(
     eq(activities.orgId, s.orgId),
     isNull(activities.deletedAt),
+    eq(activities.status, "completed"),
     ...s.mine(activities.ownerId),
     ...s.within(activities.occurredAt),
   );

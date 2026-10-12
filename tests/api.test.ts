@@ -1228,6 +1228,202 @@ describe("activities and the dashboard", () => {
   });
 });
 
+describe("open and completed activities", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  let seller2: Ctx;
+  let account: { id: string };
+  let contact: { id: string };
+  let lead: { id: string };
+  const today = () => localDate(new Date(), "America/Chicago");
+  const shift = (days: number) => {
+    const d = new Date(`${today()}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  beforeAll(async () => {
+    boss = await createOrg(db);
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    seller2 = await addMember(db, boss.orgId, "rep", "Sue Seller");
+    account = (await as(seller).post("/api/accounts", { name: "Open Co" })).body;
+    contact = (
+      await as(seller).post("/api/contacts", {
+        firstName: "Opal",
+        lastName: "Open",
+        email: "opal@open.example",
+        accountId: account.id,
+      })
+    ).body;
+    lead = (await as(seller).post("/api/leads", newLead({ email: "lena@open.example" }))).body;
+  });
+
+  it("plans an open activity, then checks it off", async () => {
+    const plan = await as(seller).post("/api/activities", {
+      type: "call",
+      status: "open",
+      subject: "Follow up on pricing",
+      contactId: contact.id,
+      dueOn: shift(2),
+    });
+    expect(plan.status).toBe(201);
+    expect(plan.body).toMatchObject({ status: "open", dueOn: shift(2), occurredAt: null });
+
+    // Without a due date, it is due today in the owner's time zone; it can go to someone else.
+    const theirs = await as(seller).post("/api/activities", {
+      type: "email",
+      status: "open",
+      subject: "Send case study",
+      accountId: account.id,
+      ownerId: seller2.userId,
+    });
+    expect(theirs.body).toMatchObject({ dueOn: today(), ownerId: seller2.userId });
+    expect(
+      (
+        await as(seller).post("/api/activities", {
+          type: "call",
+          status: "open",
+          subject: "x",
+          accountId: account.id,
+          occurredAt: new Date().toISOString(),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await as(seller).post("/api/activities", {
+          type: "call",
+          status: "open",
+          subject: "x",
+          accountId: account.id,
+          ownerId: outsider.userId,
+        })
+      ).status,
+    ).toBe(400);
+
+    // The account's timeline shows open ones first, soonest due.
+    const timeline = (await as(seller).get(`/api/activities?accountId=${account.id}`)).body;
+    expect(timeline.map((a: { subject: string }) => a.subject)).toEqual([
+      "Send case study",
+      "Follow up on pricing",
+    ]);
+    expect(timeline[0]).toMatchObject({ status: "open", overdue: false, ownerName: "Sue Seller" });
+
+    // Open ones don't count as activity on the dashboard or in reports.
+    const dash = (await as(seller).get("/api/dashboard")).body;
+    expect(dash.activityThisWeek.call).toBe(0);
+    expect(dash.recentActivity).toHaveLength(0);
+
+    // Reschedule, then complete: it gets the time it happened and lands in the history.
+    const moved = await as(seller).patch(`/api/activities/${plan.body.id}`, { dueOn: shift(5) });
+    expect(moved.body.dueOn).toBe(shift(5));
+    const done = await as(seller).patch(`/api/activities/${plan.body.id}`, {
+      status: "completed",
+      body: "Agreed on annual billing",
+    });
+    expect(done.status).toBe(200);
+    expect(done.body.status).toBe("completed");
+    expect(done.body.occurredAt).not.toBeNull();
+    expect((await as(seller).get("/api/dashboard")).body.activityThisWeek.call).toBe(1);
+    const history = (await as(seller).get(`/api/history/activity/${plan.body.id}`)).body;
+    expect(history.map((h: { field: string | null }) => h.field)).toEqual(
+      expect.arrayContaining(["dueOn", "status", "body"]),
+    );
+
+    // Reopening clears the time and keeps the due date.
+    const reopened = await as(seller).patch(`/api/activities/${plan.body.id}`, { status: "open" });
+    expect(reopened.body).toMatchObject({ status: "open", occurredAt: null, dueOn: shift(5) });
+    expect(
+      (await as(seller).patch(`/api/activities/${plan.body.id}`, { subject: "", body: "" })).status,
+    ).toBe(400);
+  });
+
+  it("lists every activity with filters, paging and overdue ones flagged", async () => {
+    await as(seller).post("/api/activities", {
+      type: "meeting",
+      status: "open",
+      subject: "Late demo",
+      leadId: lead.id,
+      dueOn: shift(-3),
+    });
+    await as(seller).post("/api/activities", { type: "note", subject: "Met at a trade show", leadId: lead.id });
+
+    const all = (await as(boss).get("/api/activities?withTotal=1")).body;
+    expect(all.total).toBe(4);
+    expect(all.rows[0]).toMatchObject({ subject: "Late demo", overdue: true, personName: expect.any(String) });
+    expect(all.rows.at(-1)).toMatchObject({ subject: "Met at a trade show", status: "completed" });
+
+    const overdue = (await as(boss).get("/api/activities?withTotal=1&status=overdue")).body;
+    expect(overdue.rows.map((a: { subject: string }) => a.subject)).toEqual(["Late demo"]);
+    const open = (await as(boss).get("/api/activities?withTotal=1&status=open")).body;
+    expect(open.total).toBe(3);
+    const sues = (await as(boss).get(`/api/activities?withTotal=1&owner=${seller2.userId}`)).body;
+    expect(sues.rows.map((a: { subject: string }) => a.subject)).toEqual(["Send case study"]);
+    const mine = (await as(seller2).get("/api/activities?withTotal=1&owner=me")).body;
+    expect(mine.total).toBe(1);
+    const calls = (await as(boss).get("/api/activities?withTotal=1&type=call&type=email")).body;
+    expect(calls.total).toBe(2);
+    const found = (await as(boss).get("/api/activities?withTotal=1&q=open%20co")).body;
+    expect(found.total).toBe(2); // by account name
+    const paged = (await as(boss).get("/api/activities?withTotal=1&sort=subject&limit=2&offset=1")).body;
+    expect(paged.rows.map((a: { subject: string }) => a.subject)).toEqual([
+      "Late demo",
+      "Met at a trade show",
+    ]);
+    expect((await as(boss).get("/api/activities?withTotal=1&sort=bogus")).status).toBe(400);
+    expect((await as(boss).get("/api/activities?withTotal=1&status=done")).status).toBe(400);
+    expect((await as(outsider).get("/api/activities?withTotal=1")).body.total).toBe(0);
+    const one = (await as(seller).get(`/api/activities/${all.rows[0].id}`)).body;
+    expect(one.subject).toBe("Late demo");
+    expect((await as(outsider).get(`/api/activities/${all.rows[0].id}`)).status).toBe(404);
+  });
+
+  it("completes, reassigns and deletes in bulk", async () => {
+    const open = (await as(boss).get("/api/activities?withTotal=1&status=open")).body.rows;
+    const ids = open.map((a: { id: string }) => a.id);
+    const done = await as(seller).post("/api/activities/bulk", {
+      ids,
+      action: "update",
+      patch: { status: "completed" },
+    });
+    expect(done.body).toEqual({ done: 3, skipped: [] });
+    expect((await as(boss).get("/api/activities?withTotal=1&status=open")).body.total).toBe(0);
+    // A rep can't reassign or delete in bulk; a manager-level role can.
+    expect(
+      (await as(seller).post("/api/activities/bulk", { ids, action: "update", patch: { ownerId: seller2.userId } })).status,
+    ).toBe(403);
+    expect((await as(seller).post("/api/activities/bulk", { ids, action: "delete" })).status).toBe(403);
+    const gone = await as(boss).post("/api/activities/bulk", { ids, action: "delete" });
+    expect(gone.body.done).toBe(3);
+    expect((await as(boss).get("/api/activities?withTotal=1")).body.total).toBe(1);
+  });
+
+  it("leaves activities written by a sequence step as they are, and keeps reports to completed ones", async () => {
+    await as(seller).post("/api/activities", {
+      type: "call",
+      status: "open",
+      subject: "Not yet",
+      accountId: account.id,
+      dueOn: shift(1),
+    });
+    const report = await as(boss).post("/api/reports/run", {
+      definition: { object: "activities", columns: ["subject", "status"], filters: [], groupBy: [], measures: [] },
+    });
+    expect(report.status).toBe(200);
+    expect(report.body.rows.map((r: string[]) => r[0])).not.toContain("Not yet");
+    const withOpen = await as(boss).post("/api/reports/run", {
+      definition: {
+        object: "activities",
+        columns: ["subject", "status"],
+        filters: [{ field: "status", op: "in", value: ["Open"] }],
+        groupBy: [],
+        measures: [],
+      },
+    });
+    expect(withOpen.body.rows).toEqual([["Not yet", "Open"]]);
+  });
+});
+
 describe("custom fields and record layouts", () => {
   let boss: Ctx;
   let seller: Ctx;

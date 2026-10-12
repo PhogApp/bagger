@@ -83,6 +83,7 @@ export async function getDashboard(db: Db, actor: Actor, raw: unknown, now = new
       and(
         eq(activities.orgId, actor.orgId),
         isNull(activities.deletedAt),
+        eq(activities.status, "completed"),
         gte(activities.occurredAt, weekAgo),
         ...mine(activities.ownerId),
       ),
@@ -180,6 +181,7 @@ export async function getDashboard(db: Db, actor: Actor, raw: unknown, now = new
       and(
         eq(activities.orgId, actor.orgId),
         isNull(activities.deletedAt),
+        eq(activities.status, "completed"),
         ...mine(activities.ownerId),
       ),
     )

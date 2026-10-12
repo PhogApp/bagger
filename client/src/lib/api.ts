@@ -163,12 +163,19 @@ export function isAdmin(me: Me | undefined): boolean {
 }
 
 export type ActivityType = "call" | "email" | "linkedin" | "meeting" | "note";
+export type ActivityStatus = "open" | "completed";
 export interface Activity {
   id: string;
   type: ActivityType;
+  /** Open: still to do, by `dueOn`. Completed: happened at `occurredAt`. */
+  status: ActivityStatus;
   subject: string | null;
   body: string | null;
-  occurredAt: string;
+  occurredAt: string | null;
+  /** A calendar day, "2026-10-31". */
+  dueOn: string | null;
+  /** Open and due before the owner's today. */
+  overdue: boolean;
   ownerId: string;
   ownerName: string | null;
   leadId: string | null;

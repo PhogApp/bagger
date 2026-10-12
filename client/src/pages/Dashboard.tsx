@@ -257,7 +257,7 @@ export function DashboardPage() {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {owner !== "me" && `${a.ownerName ?? "Someone"} · `}
-                          {formatDateTime(a.occurredAt)}
+                          {a.occurredAt && formatDateTime(a.occurredAt)}
                         </p>
                       </div>
                     </li>

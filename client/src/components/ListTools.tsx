@@ -19,6 +19,8 @@ export interface ListPrefs {
   /** "" for everyone's, "me", or a user id. */
   owner: string;
   statuses: string[];
+  /** Activity types, on the Activities list. */
+  types: string[];
   pageSize: number;
 }
 
@@ -28,6 +30,7 @@ const DEFAULT_PREFS: ListPrefs = {
   dir: "asc",
   owner: "",
   statuses: [],
+  types: [],
   pageSize: 50,
 };
 
@@ -202,9 +205,13 @@ export function ColumnPicker(props: {
   );
 }
 
+/** A status to filter or change by: the organization's own, or a fixed one with a `value`. */
+export type StatusChoice = Pick<StatusOption, "id" | "name"> & { value?: string };
+const choiceValue = (o: StatusChoice) => o.value ?? o.name;
+
 /** "Any status" or a set of them. */
 export function StatusFilter(props: {
-  options: StatusOption[];
+  options: StatusChoice[];
   chosen: string[];
   label: string;
   onChange: (chosen: string[]) => void;
@@ -213,7 +220,7 @@ export function StatusFilter(props: {
     props.chosen.length === 0
       ? `Any ${props.label.toLowerCase()}`
       : props.chosen.length === 1
-        ? props.chosen[0]
+        ? (props.options.find((o) => choiceValue(o) === props.chosen[0])?.name ?? props.chosen[0])
         : `${props.chosen.length} ${props.label === "Status" ? "statuses" : `${props.label.toLowerCase()}s`}`;
   return (
     <Popover ariaLabel={`Filter by ${props.label.toLowerCase()}`} label={text}>
@@ -223,12 +230,12 @@ export function StatusFilter(props: {
             <label className="flex items-center gap-2 py-1">
               <input
                 type="checkbox"
-                checked={props.chosen.includes(o.name)}
+                checked={props.chosen.includes(choiceValue(o))}
                 onChange={(e) =>
                   props.onChange(
                     e.target.checked
-                      ? [...props.chosen, o.name]
-                      : props.chosen.filter((c) => c !== o.name),
+                      ? [...props.chosen, choiceValue(o)]
+                      : props.chosen.filter((c) => c !== choiceValue(o)),
                   )
                 }
               />
@@ -348,7 +355,7 @@ export function BulkChanges(props: {
   ids: string[];
   me: Me | undefined;
   users: OrgUser[] | undefined;
-  statuses?: StatusOption[];
+  statuses?: StatusChoice[];
   statusLabel: string;
   canDelete: boolean;
   onDone: () => void;
@@ -401,7 +408,7 @@ export function BulkChanges(props: {
         >
           <option value="">Change {props.statusLabel.toLowerCase()}…</option>
           {props.statuses.map((s) => (
-            <option key={s.id} value={s.name}>
+            <option key={s.id} value={choiceValue(s)}>
               {s.name}
             </option>
           ))}

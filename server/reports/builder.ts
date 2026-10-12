@@ -182,10 +182,18 @@ function builtIn(object: ReportObject): CatalogField[] {
           value: raw("t.type"),
         },
         { key: "subject", label: "Subject", type: "text", value: raw("t.subject") },
+        {
+          key: "status",
+          label: "Status",
+          type: "choice",
+          options: ["Open", "Completed"],
+          value: raw("initcap(t.status)"),
+        },
         { key: "occurredAt", label: "Date", type: "datetime", value: raw("t.occurred_at") },
+        { key: "dueOn", label: "Due Date", type: "date", value: raw("t.due_on") },
         {
           key: "ownerId",
-          label: "Done By",
+          label: "Owner",
           type: "user",
           value: raw("t.owner_id"),
           display: userName("t.owner_id"),
@@ -573,6 +581,10 @@ export async function runReport(
     !def.filters.some((f) => f.field === "converted" || f.field === "convertedAt")
   ) {
     where.push(sql`t.converted_at is null`);
+  }
+  // Open activities haven't happened yet; only a report that asks about status includes them.
+  if (object === "activities" && !def.filters.some((f) => f.field === "status")) {
+    where.push(sql`t.status = 'completed'`);
   }
   for (const f of def.filters) where.push(condition(ctx, f));
   const whereSql = sql.join(where, sql` and `);

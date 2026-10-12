@@ -350,10 +350,25 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
 
   // ---- activities and the dashboard
   api.get("/activities", async (req, res) => {
-    res.json(await activityService.timeline(db, actorOf(req), req.query));
+    // ?withTotal=1 is the Activities page: paged, with the total. Otherwise one record's timeline.
+    const { withTotal, ...query } = req.query;
+    res.json(
+      withTotal
+        ? await activityService.listActivities(db, actorOf(req), query)
+        : await activityService.timeline(db, actorOf(req), query),
+    );
   });
   api.post("/activities", async (req, res) => {
     res.status(201).json(await activityService.logActivity(db, actorOf(req), req.body));
+  });
+  api.post("/activities/bulk", async (req, res) => {
+    res.json(await activityService.bulkActivities(db, actorOf(req), req.body));
+  });
+  api.get("/activities/:id", async (req, res) => {
+    res.json(await activityService.getActivity(db, actorOf(req), id(req)));
+  });
+  api.patch("/activities/:id", async (req, res) => {
+    res.json(await activityService.updateActivity(db, actorOf(req), id(req), req.body));
   });
   api.delete("/activities/:id", async (req, res) => {
     await activityService.deleteActivity(db, actorOf(req), id(req));
