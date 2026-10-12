@@ -1,12 +1,20 @@
-import { ActivityTimeline } from "@/components/ActivityTimeline";
-import { RecordPage, type Column, type Field } from "@/components/RecordPage";
-import { StatusBadge } from "@/components/StatusBadge";
+import { Link } from "wouter";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
 import { ConvertLeadButton } from "@/components/ConvertLead";
 import { ImportButton } from "@/components/ImportRecords";
-import { canUse, permissionsFor, useMe, useStatuses, useOrgUsers } from "@/lib/api";
+import { RecordDetail } from "@/components/RecordDetail";
+import { RecordPage, type Column, type Field } from "@/components/RecordPage";
+import { StatusBadge } from "@/components/StatusBadge";
+import { canUse, permissionsFor, useMe, useOrgUsers, useStatuses } from "@/lib/api";
 import { formatPhone } from "@/lib/utils";
-import { defaultStatus, nameOf, ownerField, statusColor, statusField } from "./shared";
+import {
+  confirmStatusChange,
+  defaultStatus,
+  nameOf,
+  ownerField,
+  statusColor,
+  statusField,
+} from "./shared";
 
 interface Lead {
   id: string;
@@ -20,14 +28,14 @@ interface Lead {
   directPhone: string | null;
   hqPhone: string | null;
   status: string;
+  convertedContactId: string | null;
+  [field: string]: unknown;
 }
 
-export function LeadsPage() {
+function useLeadFields(): Field[] {
   const { data: users } = useOrgUsers();
-  const { data: me } = useMe();
   const { data: statuses } = useStatuses();
-
-  const fields: Field[] = [
+  return [
     { name: "firstName", label: "First Name", required: true, span: 2 },
     { name: "lastName", label: "Last Name", required: true, span: 2 },
     { name: "title", label: "Title", span: 2 },
@@ -47,6 +55,13 @@ export function LeadsPage() {
     ownerField(users),
     { name: "notes", label: "Notes", kind: "textarea", span: 6 },
   ];
+}
+
+export function LeadsPage() {
+  const { data: users } = useOrgUsers();
+  const { data: me } = useMe();
+  const { data: statuses } = useStatuses();
+  const fields = useLeadFields();
 
   const columns: Column<Lead>[] = [
     {
@@ -57,7 +72,12 @@ export function LeadsPage() {
     { header: "Company", cell: (l) => l.company ?? "—" },
     { header: "Phone", cell: (l) => formatPhone(l.cellPhone ?? l.directPhone ?? l.hqPhone) },
     { header: "Owner", cell: (l) => nameOf(users, l.ownerId) },
-    { header: "Status", cell: (l) => <StatusBadge status={l.status} color={statusColor(statuses, "leads", l.status)} /> },
+    {
+      header: "Status",
+      cell: (l) => (
+        <StatusBadge status={l.status} color={statusColor(statuses, "leads", l.status)} />
+      ),
+    },
   ];
 
   return (
@@ -71,6 +91,7 @@ export function LeadsPage() {
       fields={fields}
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "leads"), ownerId: me?.user.id ?? "" }}
+      detailPath={(id) => `/leads/${id}`}
       headerActions={
         canUse(me, "data.import") && permissionsFor(me, "leads").canCreate ? (
           <ImportButton kind="leads" />
@@ -78,25 +99,54 @@ export function LeadsPage() {
       }
       bulkActions={
         canUse(me, "sequences.bulk_enroll")
-          ? (selected, clear) => (
-              <BulkEnrollButton kind="leads" people={selected} onDone={clear} />
-            )
+          ? (selected, clear) => <BulkEnrollButton kind="leads" people={selected} onDone={clear} />
           : undefined
       }
-      recordActions={(lead, close) =>
-        permissionsFor(me, "leads").canEdit(lead.ownerId) &&
-        permissionsFor(me, "contacts").canCreate ? (
-          <ConvertLeadButton lead={lead} onDone={close} />
+      describe={(l) => `${l.firstName} ${l.lastName}`}
+    />
+  );
+}
+
+export function LeadDetailPage({ params }: { params: { id: string } }) {
+  const { data: me } = useMe();
+  const { data: statuses } = useStatuses();
+  const fields = useLeadFields();
+  return (
+    <RecordDetail<Lead>
+      object="leads"
+      recordType="lead"
+      id={params.id}
+      listHref="/leads"
+      listLabel="Leads"
+      fields={fields}
+      title={(l) => `${l.firstName} ${l.lastName}`}
+      subtitle={(l) => [l.title, l.company].filter(Boolean).join(" · ")}
+      badge={(l) => (
+        <StatusBadge status={l.status} color={statusColor(statuses, "leads", l.status)} />
+      )}
+      frozen={(l) =>
+        l.convertedContactId ? (
+          <>
+            This lead was converted to a contact and can no longer be changed.{" "}
+            <Link href={`/contacts/${l.convertedContactId}`} className="font-medium underline">
+              Open the contact
+            </Link>
+          </>
         ) : null
       }
-      tabs={[
-        {
-          value: "activity",
-          label: "Activity",
-          render: (r) => <ActivityTimeline about={{ leadId: r.id }} />,
-        },
-      ]}
-      describe={(l) => `${l.firstName} ${l.lastName}`}
+      actions={(l) => (
+        <>
+          {canUse(me, "sequences.enroll") && (
+            <BulkEnrollButton kind="leads" people={[l]} onDone={() => undefined} standalone />
+          )}
+          {permissionsFor(me, "leads").canEdit(l.ownerId) &&
+            permissionsFor(me, "contacts").canCreate && (
+              <ConvertLeadButton lead={l} onDone={() => undefined} />
+            )}
+        </>
+      )}
+      confirm={(field, value) => confirmStatusChange(statuses, "leads", field, value)}
+      activity={(l) => ({ leadId: l.id })}
     />
   );
 }

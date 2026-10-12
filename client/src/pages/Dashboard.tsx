@@ -299,13 +299,13 @@ export function DashboardPage() {
                   const Icon = kind.icon;
                   const who = a.personName ?? a.opportunityName ?? a.accountName;
                   const href = a.contactId
-                    ? `/contacts?open=${a.contactId}`
+                    ? `/contacts/${a.contactId}`
                     : a.leadId
-                      ? `/leads?open=${a.leadId}`
+                      ? `/leads/${a.leadId}`
                       : a.opportunityId
-                        ? `/opportunities?open=${a.opportunityId}`
+                        ? `/opportunities/${a.opportunityId}`
                         : a.accountId
-                          ? `/accounts?open=${a.accountId}`
+                          ? `/accounts/${a.accountId}`
                           : null;
                   return (
                     <li key={a.id} className="flex items-start gap-2 py-2">

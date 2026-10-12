@@ -39,7 +39,7 @@ function Section(props: {
   children: ReactNode;
 }) {
   return (
-    <section className="mt-6">
+    <section className="mt-6 first:mt-0">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold">
           {props.title}
@@ -92,7 +92,7 @@ export function AccountRelated({ accountId }: { accountId: string }) {
   });
 
   return (
-    <div className="mt-2 border-t">
+    <div>
       <Section
         title="Contacts"
         addHref={
@@ -108,7 +108,7 @@ export function AccountRelated({ accountId }: { accountId: string }) {
       >
         {contacts.data?.map((c) => (
           <li key={c.id}>
-            <Link href={`/contacts?open=${c.id}`} className={rowClass}>
+            <Link href={`/contacts/${c.id}`} className={rowClass}>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">
                   {c.firstName} {c.lastName}
@@ -138,7 +138,7 @@ export function AccountRelated({ accountId }: { accountId: string }) {
       >
         {opportunities.data?.map((o) => (
           <li key={o.id}>
-            <Link href={`/opportunities?open=${o.id}`} className={rowClass}>
+            <Link href={`/opportunities/${o.id}`} className={rowClass}>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">{o.name}</span>
                 <span className="block truncate text-muted-foreground">

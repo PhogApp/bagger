@@ -4,6 +4,7 @@ import {
   Mail,
   MessageSquare,
   Phone,
+  Plus,
   StickyNote,
   Trash2,
   type LucideIcon,
@@ -62,6 +63,8 @@ export function ActivityTimeline({ about }: { about: ActivityAbout }) {
     queryFn: () => api<Activity[]>("GET", `/api/activities?${key}=${value}`),
   });
 
+  // The form stays folded away until someone wants to log something.
+  const [logging, setLogging] = useState(false);
   const [type, setType] = useState<ActivityType>("call");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -84,6 +87,7 @@ export function ActivityTimeline({ about }: { about: ActivityAbout }) {
       setBody("");
       setWhen(nowLocal());
       setWhenChanged(false);
+      setLogging(false);
       await refresh();
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
@@ -95,7 +99,13 @@ export function ActivityTimeline({ about }: { about: ActivityAbout }) {
 
   return (
     <div className="space-y-4 py-2">
-      {can.canCreate && (
+      {can.canCreate && !logging && (
+        <Button type="button" variant="outline" onClick={() => setLogging(true)}>
+          <Plus className="mr-2 h-4 w-4" aria-hidden />
+          Log activity
+        </Button>
+      )}
+      {can.canCreate && logging && (
         <form
           className="space-y-3 rounded-md border p-3"
           onSubmit={(e) => {
@@ -159,13 +169,18 @@ export function ActivityTimeline({ about }: { about: ActivityAbout }) {
             ) : (
               <span />
             )}
-            <Button
-              type="submit"
-              variant="outline"
-              disabled={log.isPending || (subject.trim() === "" && body.trim() === "")}
-            >
-              Log activity
-            </Button>
+            <span className="flex gap-2">
+              <Button type="button" variant="ghost" onClick={() => setLogging(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={log.isPending || (subject.trim() === "" && body.trim() === "")}
+              >
+                Save activity
+              </Button>
+            </span>
           </div>
         </form>
       )}

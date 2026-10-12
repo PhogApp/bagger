@@ -93,15 +93,15 @@ function ConvertDialog({
         choice === "new"
           ? { newAccount: { name, website } }
           : { accountId: choice === "other" ? otherId : choice.replace("match:", "") };
-      return api("POST", `/api/leads/${lead.id}/convert`, body);
+      return api<{ contactId: string }>("POST", `/api/leads/${lead.id}/convert`, body);
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       for (const key of ["leads", "contacts", "accounts", "tasks"]) {
         await queryClient.invalidateQueries({ queryKey: [key] });
       }
       onClose();
       onDone();
-      navigate("/contacts");
+      navigate(`/contacts/${result.contactId}`);
     },
   });
 
