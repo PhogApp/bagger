@@ -25,14 +25,19 @@ export interface ResolvedContent {
   edited: boolean;
 }
 
-export function resolveContent(src: ContentSources, person: MergePerson): ResolvedContent {
+/** `html` is set for email steps, whose bodies are HTML. Subjects are always plain text. */
+export function resolveContent(
+  src: ContentSources,
+  person: MergePerson,
+  html = false,
+): ResolvedContent {
   const baseSubject = src.template ? src.template.subject : src.step.subject;
   const baseBody = src.template ? src.template.body : src.step.body;
   const subject = src.task.overrideSubject ?? baseSubject;
   const body = src.task.overrideBody ?? baseBody;
   return {
     subject: subject == null ? null : applyMergeFields(subject, person),
-    body: body == null ? null : applyMergeFields(body, person),
+    body: body == null ? null : applyMergeFields(body, person, { html }),
     edited: src.task.overrideSubject != null || src.task.overrideBody != null,
   };
 }

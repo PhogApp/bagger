@@ -40,6 +40,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { canUse, permissionsFor, useApi, useMe, useOrgUsers } from "@/lib/api";
 import { toast } from "@/lib/toast";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import { htmlToText, looksLikeHtml, textToHtml } from "../../../shared/richtext";
 import { cn, formatDate } from "@/lib/utils";
 import { sequenceFields, useSequenceStats, type Sequence } from "./Sequences";
 import { nameOf } from "./shared";
@@ -228,7 +230,17 @@ function StepEditor({
           id="step-type"
           className={selectClass}
           value={form.type}
-          onChange={(e) => set({ type: e.target.value as StepType, templateId: "" })}
+          onChange={(e) => {
+            const type = e.target.value as StepType;
+            // Email messages are formatted; LinkedIn ones are plain text.
+            const body =
+              type === "email"
+                ? looksLikeHtml(form.body)
+                  ? form.body
+                  : textToHtml(form.body)
+                : htmlToText(form.body);
+            set({ type, templateId: "", body });
+          }}
         >
           {Object.entries(STEP_LABELS).map(([value, label]) => (
             <option key={value} value={value}>
@@ -321,7 +333,7 @@ function StepEditor({
                 <div className="rounded-md border bg-muted/30 p-3 text-sm">
                   {chosen.subject && <p className="font-medium">{chosen.subject}</p>}
                   <p className="line-clamp-4 whitespace-pre-line text-muted-foreground">
-                    {chosen.body}
+                    {htmlToText(chosen.body)}
                   </p>
                   <Link
                     href={`/templates/${chosen.id}`}
@@ -350,12 +362,20 @@ function StepEditor({
               )}
               <div className="col-span-6 space-y-1.5">
                 <Label htmlFor="step-body">Message text</Label>
-                <Textarea
-                  id="step-body"
-                  rows={7}
-                  value={form.body}
-                  onChange={(e) => set({ body: e.target.value })}
-                />
+                {form.type === "email" ? (
+                  <RichTextEditor
+                    id="step-body"
+                    value={form.body}
+                    onChange={(body) => set({ body })}
+                  />
+                ) : (
+                  <Textarea
+                    id="step-body"
+                    rows={7}
+                    value={form.body}
+                    onChange={(e) => set({ body: e.target.value })}
+                  />
+                )}
                 <p className="text-xs text-muted-foreground">{MERGE_FIELD_HELP}</p>
               </div>
             </>
@@ -492,7 +512,7 @@ function StepsPanel({
             ? `Template: ${templateName(step.templateId) ?? "(deleted)"}`
             : step.type === "phone_call"
               ? step.callObjectives || step.callScript
-              : step.subject || step.body;
+              : step.subject || (step.body && htmlToText(step.body));
           return (
             <li key={step.id} className="flex gap-3">
               <div className="flex w-16 shrink-0 flex-col items-center pt-3 text-xs text-muted-foreground">

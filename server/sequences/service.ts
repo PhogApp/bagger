@@ -22,6 +22,7 @@ import {
 import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
 import * as engine from "./engine";
+import { messageFor, stepKind } from "./html";
 
 /**
  * Permission-checked operations on sequences. The engine (engine.ts) knows
@@ -166,6 +167,7 @@ export async function addStep(
   raw: unknown,
 ): Promise<Step> {
   const values = stepInput.parse(raw);
+  values.body = messageFor(stepKind(values.type), values.body);
   return db.transaction(async (tx) => {
     const sequence = await loadSequence(tx, actor, sequenceId, true);
     requireRecord(actor.permissions, "sequences", "edit", sequence, actor.userId);
@@ -216,6 +218,12 @@ export async function updateStep(db: Db, actor: Actor, stepId: string, raw: unkn
 
   return db.transaction(async (tx) => {
     const before = await loadStepForEdit(tx, actor, stepId);
+    // Email bodies are HTML and LinkedIn ones plain text; a change of type converts.
+    const kind = stepKind(full.type ?? before.type);
+    if (full.body !== undefined) full.body = messageFor(kind, full.body);
+    else if (full.type && full.type !== before.type && before.body) {
+      full.body = messageFor(kind, before.body);
+    }
     const changes = diffFields(before, full);
     if (changes.length === 0) return before;
     const nextType = full.type ?? before.type;

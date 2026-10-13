@@ -14,6 +14,7 @@ import {
 } from "../../shared/schema";
 import { ValidationError } from "../errors";
 import { stopForPerson } from "../sequences/engine";
+import { messageFor } from "../sequences/html";
 import { accountMatches, personMatches } from "./duplicates";
 import { customInput } from "../fields/service";
 import { statusEffect } from "../statuses/service";
@@ -378,6 +379,16 @@ export const templateService = recordService<typeof templates.$inferSelect, type
   },
   search: [templates.name, templates.subject, templates.body],
   orderBy: [templates.name],
+  // Email messages are kept as clean HTML, LinkedIn ones as plain text.
+  prepare: (values, before) => {
+    const kind = (values.type ?? before?.type ?? "email") as "email" | "linkedin";
+    if (typeof values.body === "string") {
+      values.body = messageFor(kind, values.body);
+      if (values.body === "") throw new ValidationError("body: Write the message");
+    } else if (before && values.type && values.type !== before.type) {
+      values.body = messageFor(kind, before.body);
+    }
+  },
   // A step that uses a deleted template would have nothing to send.
   afterDelete: async (tx, _actor, row) => {
     const [use] = await tx

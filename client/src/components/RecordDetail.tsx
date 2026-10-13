@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { RichText, RichTextEditor } from "@/components/RichTextEditor";
 import { ApiError, permissionsFor, useApi, useMe } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { cn, formatDay, formatPhone } from "@/lib/utils";
@@ -97,6 +98,8 @@ function shown(field: Field, raw: unknown): ReactNode {
       return formatDay(value);
     case "textarea":
       return <span className="whitespace-pre-line">{value}</span>;
+    case "richtext":
+      return <RichText html={value} />;
     default:
       return value;
   }
@@ -205,6 +208,33 @@ function InlineField<T extends Row>(props: {
                   Save
                 </Button>
                 <Button size="sm" variant="ghost" onClick={cancel}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : field.kind === "richtext" ? (
+            <div
+              onBlur={(e) => {
+                // Save once focus leaves the editor and its toolbar.
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null) && !asking)
+                  void commit(draft);
+              }}
+              className="space-y-2"
+            >
+              <RichTextEditor
+                id={id}
+                value={draft}
+                disabled={saving}
+                autoFocus
+                onChange={setDraft}
+                onSubmit={() => void commit(draft)}
+                onCancel={cancel}
+              />
+              <div className="flex gap-2">
+                <Button size="sm" disabled={saving} onClick={() => void commit(draft)}>
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onMouseDown={(e) => e.preventDefault()} onClick={cancel}>
                   Cancel
                 </Button>
               </div>
@@ -342,6 +372,8 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     queryClient.setQueryData(key, updated);
     await queryClient.invalidateQueries({ queryKey: [props.object], refetchType: "none" });
     await queryClient.invalidateQueries({ queryKey: ["history", props.recordType, props.id] });
+    // Run Steps shows names and messages from records and templates.
+    await queryClient.invalidateQueries({ queryKey: ["tasks"] });
   };
   const patch = async (name: string, value: unknown) =>
     refresh(await api<T>("PATCH", `/api/${props.object}/${props.id}`, toBody({ [name]: value })));
