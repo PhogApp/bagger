@@ -1,16 +1,15 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { formatPhoneNumber } from "../../../shared/phone";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 /** Show a US number as (555) 123-4567; anything else is shown as typed. */
+/** A phone number as text, the same way PhoneLink shows it. */
 export function formatPhone(phone: string | null | undefined): string {
-  if (!phone) return "—";
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length !== 10) return phone;
-  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  return formatPhoneNumber(phone) || "—";
 }
 
 export function formatDate(value: string): string {

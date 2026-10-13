@@ -1,0 +1,1 @@
+ALTER TABLE "step_tasks" ADD COLUMN "call_outcome" text;

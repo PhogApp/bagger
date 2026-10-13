@@ -24,6 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { RichTextEditor } from "@/components/RichTextEditor";
+import { PhoneLink } from "@/components/PhoneLink";
 import {
   BulkChanges,
   ColumnPicker,
@@ -468,6 +469,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
               hidden: true,
               cell: (row) => {
                 const v = read(row);
+                if (field.kind === "tel") return <PhoneLink value={asText(v)} copy={false} />;
                 return (field.format?.(v) ?? text(row)) || "—";
               },
               csv: (row) =>

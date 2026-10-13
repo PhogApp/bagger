@@ -130,6 +130,12 @@ for (const lead of enrolled.slice(0, 4)) {
       });
     }
   }
+  if (lead.lastName === "Rushford") {
+    // And a phone call due today, to try dialing and logging how it went.
+    const { nextTask: email } = await seq.complete(db, owner, task.id, {});
+    const { nextTask: call } = await seq.complete(db, owner, email!.id, {});
+    await seq.snooze(db, owner, call!.id, { dueOn: localDate(new Date(), "America/Chicago") });
+  }
 }
 
 // PREVIEW_AS=rep shows the screens as a Rep instead of an Admin.

@@ -1,5 +1,6 @@
 import { CheckCircle2, CircleAlert, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 /**
@@ -118,14 +119,18 @@ export function Toaster() {
     },
     () => toasts,
   );
-  return (
+  // At the top of the page and a live region, so messages stay visible and are
+  // read out even while a dialog hides the rest of the app.
+  return createPortal(
     <ol
       aria-label="Messages"
+      aria-live="polite"
       className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
     >
       {current.map((t) => (
         <ToastItem key={t.id} t={t} />
       ))}
-    </ol>
+    </ol>,
+    document.body,
   );
 }

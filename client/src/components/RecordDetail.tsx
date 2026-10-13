@@ -11,7 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { RichText, RichTextEditor } from "@/components/RichTextEditor";
 import { ApiError, permissionsFor, useApi, useMe } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { cn, formatDay, formatPhone } from "@/lib/utils";
+import { cn, formatDay } from "@/lib/utils";
+import { PhoneLink } from "@/components/PhoneLink";
 
 /**
  * A record's own page: its fields on the left, its activity and history on
@@ -93,7 +94,7 @@ function shown(field: Field, raw: unknown): ReactNode {
         </a>
       );
     case "tel":
-      return formatPhone(value);
+      return <PhoneLink value={value} />;
     case "date":
       return formatDay(value);
     case "textarea":

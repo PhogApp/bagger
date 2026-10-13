@@ -541,7 +541,7 @@ describe("converting a lead to a contact", () => {
     const people = (await as(rep).get(`/api/sequences/${sequence.id}/enrollments`)).body;
     expect(people).toHaveLength(1);
     expect(people[0]).toMatchObject({ contactId: contact.id, leadId: null, state: "active" });
-    const done = await as(rep).post(`/api/tasks/${task.taskId}/complete`, {});
+    const done = await as(rep).post(`/api/tasks/${task.taskId}/complete`, { callOutcome: "connected" });
     expect(done.status).toBe(200);
 
     // The lead leaves the list, can't be changed, and can't be enrolled again.
@@ -1585,6 +1585,56 @@ describe("template and sequence pages", () => {
   });
 });
 
+describe("logging how a call went", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+
+  beforeAll(async () => {
+    boss = await createOrg(db);
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+  });
+
+  it("needs an outcome to complete a Phone Call step, and keeps it", async () => {
+    const sequence = (await as(seller).post("/api/sequences", { name: "Calls" })).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "phone_call", title: "First call" });
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "Follow-up", subject: "Hi", body: "Hi" });
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "phone_call", title: "Second call" });
+    const lead = (await as(seller).post("/api/leads", newLead({ email: "caller@example.com" }))).body;
+    const enrolled = (await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: lead.id })).body;
+    const taskId = enrolled.task.id;
+
+    const missing = await as(seller).post(`/api/tasks/${taskId}/complete`, {});
+    expect(missing.status).toBe(400);
+    expect(missing.body).toMatchObject({ error: "call_outcome_required", message: "Choose how the call went" });
+    expect((await as(seller).post(`/api/tasks/${taskId}/complete`, { callOutcome: "busy" })).status).toBe(400);
+
+    const done = await as(seller).post(`/api/tasks/${taskId}/complete`, { callOutcome: "voicemail", note: "Left a message" });
+    expect(done.status).toBe(200);
+    const [task] = await db.select().from(s.stepTasks).where(eq(s.stepTasks.id, taskId));
+    expect(task).toMatchObject({ state: "completed", callOutcome: "voicemail" });
+    const [event] = await db
+      .select()
+      .from(s.events)
+      .where(eq(s.events.enrollmentId, enrolled.enrollment.id))
+      .then((rows) => rows.filter((e) => e.type === "step.completed"));
+    expect(event.data).toEqual({ callOutcome: "voicemail" });
+    const logged = (await as(seller).get(`/api/activities?leadId=${lead.id}`)).body;
+    expect(logged[0]).toMatchObject({ type: "call", body: "Outcome: Voicemail\n\nNote: Left a message" });
+
+    // An email step completes without one; an outcome sent with it is ignored.
+    const email = await as(seller).post(`/api/tasks/${done.body.nextTask.id}/complete`, { callOutcome: "connected" });
+    expect(email.status).toBe(200);
+    const [emailTask] = await db.select().from(s.stepTasks).where(eq(s.stepTasks.id, done.body.nextTask.id));
+    expect(emailTask.callOutcome).toBeNull();
+
+    // Skipping a call needs no outcome.
+    const skipped = await as(seller).post(`/api/tasks/${email.body.nextTask.id}/skip`, {});
+    expect(skipped.status).toBe(200);
+    const [skippedTask] = await db.select().from(s.stepTasks).where(eq(s.stepTasks.id, email.body.nextTask.id));
+    expect(skippedTask).toMatchObject({ state: "skipped", callOutcome: null });
+  });
+});
+
 describe("custom fields and record layouts", () => {
   let boss: Ctx;
   let seller: Ctx;
@@ -1808,7 +1858,7 @@ describe("standard reports", () => {
       people.push((await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: l.id })).body);
     }
     const done = (await as(seller).post(`/api/tasks/${people[0].task.id}/complete`, {})).body;
-    await as(seller).post(`/api/tasks/${done.nextTask.id}/complete`, {}); // finished
+    await as(seller).post(`/api/tasks/${done.nextTask.id}/complete`, { callOutcome: "voicemail" }); // finished
     await as(seller).post(`/api/tasks/${people[1].task.id}/skip`, {});
     await as(seller).post(`/api/enrollments/${people[2].enrollment.id}/stop`, { reason: "replied" });
 
