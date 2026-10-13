@@ -630,6 +630,51 @@ export async function stopForPerson(
   });
 }
 
+// ------------------------------------------------- someone leaving
+
+/**
+ * When a person's seat ends, their running sequences and the steps waiting in
+ * their queue move to whoever takes over their records. Finished enrollments
+ * and closed steps keep their name, so history and reports stay true.
+ */
+export async function reassignQueue(
+  tx: Db,
+  ctx: Ctx,
+  fromUserId: string,
+  toUserId: string,
+  at: Date = new Date(),
+): Promise<{ enrollments: number; tasks: number }> {
+  const moved = await tx
+    .update(enrollments)
+    .set({ ownerId: toUserId })
+    .where(
+      and(
+        eq(enrollments.orgId, ctx.orgId),
+        eq(enrollments.ownerId, fromUserId),
+        inArray(enrollments.state, ["active", "paused"]),
+      ),
+    )
+    .returning();
+  const tasks = await tx
+    .update(stepTasks)
+    .set({ ownerId: toUserId })
+    .where(
+      and(
+        eq(stepTasks.orgId, ctx.orgId),
+        eq(stepTasks.ownerId, fromUserId),
+        eq(stepTasks.state, "open"),
+      ),
+    )
+    .returning({ id: stepTasks.id });
+  for (const enrollment of moved) {
+    await logEvent(tx, ctx, "enrollment.reassigned", enrollment, {
+      at,
+      data: { from: fromUserId, to: toUserId },
+    });
+  }
+  return { enrollments: moved.length, tasks: tasks.length };
+}
+
 // ---------------------------------------------------- lead conversion
 
 /**

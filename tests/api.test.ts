@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveActor } from "../server/auth/actor";
 import type { Ctx, Db } from "../server/db/types";
 import { createApp } from "../server/http/app";
+import { signClerkWebhook } from "../server/people/clerk-webhook";
 import * as s from "../shared/schema";
 import { localDate } from "../server/sequences/dates";
 import { addMember, createOrg, createTestDb } from "./helpers";
@@ -1725,6 +1726,144 @@ describe("the full data export", () => {
     } finally {
       await db.update(s.organizations).set({ billingStatus: "active" }).where(eq(s.organizations.id, boss.orgId));
     }
+  });
+});
+
+describe("removing and reinstating people", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  let heir: Ctx;
+  let quitter: Ctx;
+  let lead: { id: string };
+  let activityDone: { id: string };
+  let activityOpen: { id: string };
+  let enrolled: { enrollment: { id: string }; task: { id: string } };
+  const people = async (who: Ctx = boss) => (await as(who).get("/api/people")).body;
+  const person = async (id: string) =>
+    (await people()).people.find((p: { id: string }) => p.id === id);
+  const membership = async (who: Ctx) =>
+    (await db.select().from(s.memberships).where(eq(s.memberships.userId, who.userId)))[0];
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { waitDayMode: "calendar" });
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    heir = await addMember(db, boss.orgId, "rep", "Hal Heir");
+    quitter = await addMember(db, boss.orgId, "rep", "Quinn Quitter");
+    lead = (await as(seller).post("/api/leads", newLead({ email: "owned@leaving.example" }))).body;
+    await as(seller).post("/api/accounts", { name: "Leaving Co" });
+    activityDone = (await as(seller).post("/api/activities", { type: "call", subject: "Done call", leadId: lead.id })).body;
+    activityOpen = (await as(seller).post("/api/activities", { type: "call", status: "open", subject: "Call back", leadId: lead.id })).body;
+    const sequence = (await as(seller).post("/api/sequences", { name: "Seller's sequence" })).body;
+    await as(seller).post(`/api/sequences/${sequence.id}/steps`, { type: "email", title: "Hi", subject: "Hi", body: "Hi" });
+    const other = (await as(seller).post("/api/leads", newLead({ email: "enrolled@leaving.example" }))).body;
+    enrolled = (await as(seller).post(`/api/sequences/${sequence.id}/enrollments`, { leadId: other.id })).body;
+    await as(seller).post("/api/reports/saved", { name: "Mine", definition: { object: "leads", columns: ["name"], filters: [], groupBy: [], measures: [] } });
+  });
+
+  it("ends a seat at the end of the month, with undo, and refuses the wrong removals", async () => {
+    expect((await as(seller).post(`/api/people/${heir.userId}/remove`, { handTo: boss.userId })).status).toBe(403);
+    expect((await as(boss).post(`/api/people/${boss.userId}/remove`, { handTo: heir.userId })).status).toBe(400); // yourself, and the owner
+    expect((await as(boss).post(`/api/people/${seller.userId}/remove`, { handTo: seller.userId })).status).toBe(400);
+    expect((await as(boss).post(`/api/people/${seller.userId}/remove`, { handTo: outsider.userId })).status).toBe(400);
+
+    const res = await as(boss).post(`/api/people/${seller.userId}/remove`, { handTo: heir.userId });
+    expect(res.status).toBe(204);
+    const ending = await person(seller.userId);
+    expect(ending).toMatchObject({ status: "ending", statusLabel: "Ending", handToName: "Hal Heir" });
+    const today = localDate(new Date(), "America/Chicago");
+    expect(ending.endsOn >= today).toBe(true);
+    expect(ending.endsOn.slice(0, 7)).toBe(today.slice(0, 7)); // the last day of this month
+    // They keep working until then, and their records stay theirs.
+    expect((await as(seller).get("/api/me")).status).toBe(200);
+    expect((await as(boss).get(`/api/leads/${lead.id}`)).body.ownerId).toBe(seller.userId);
+    expect((await people()).seats).toMatchObject({ active: 3, ending: 1 });
+    expect((await as(boss).post(`/api/people/${seller.userId}/remove`, { handTo: heir.userId })).status).toBe(400);
+
+    // Undo, then remove again choosing someone else, then change who takes over.
+    expect((await as(boss).post(`/api/people/${seller.userId}/undo`)).status).toBe(204);
+    expect(await person(seller.userId)).toMatchObject({ status: "active", endsOn: null });
+    await as(boss).post(`/api/people/${seller.userId}/remove`, { handTo: boss.userId });
+    expect((await as(boss).put(`/api/people/${seller.userId}/hand-to`, { handTo: heir.userId })).status).toBe(204);
+    expect((await person(seller.userId)).handToName).toBe("Hal Heir");
+  });
+
+  it("hands everything over when the seat ends, keeping history with the person who did it", async () => {
+    // Move the last day into the past; the next request ends the seat.
+    await db.update(s.memberships).set({ endsOn: "2020-01-31" }).where(eq(s.memberships.userId, seller.userId));
+    expect((await as(seller).get("/api/me")).status).toBe(401);
+    expect(await membership(seller)).toMatchObject({ status: "removed", handToUserId: heir.userId });
+    expect((await membership(seller)).endedAt).not.toBeNull();
+
+    expect((await as(boss).get(`/api/leads/${lead.id}`)).body.ownerId).toBe(heir.userId);
+    const accounts = (await as(boss).get("/api/accounts?q=Leaving")).body;
+    expect(accounts[0].ownerId).toBe(heir.userId);
+    const acts = (await as(boss).get(`/api/activities?leadId=${lead.id}`)).body;
+    expect(acts.find((a: { id: string }) => a.id === activityOpen.id).ownerId).toBe(heir.userId);
+    expect(acts.find((a: { id: string }) => a.id === activityDone.id).ownerId).toBe(seller.userId);
+    const [enrollment] = await db.select().from(s.enrollments).where(eq(s.enrollments.id, enrolled.enrollment.id));
+    const [task] = await db.select().from(s.stepTasks).where(eq(s.stepTasks.id, enrolled.task.id));
+    expect(enrollment.ownerId).toBe(heir.userId);
+    expect(task.ownerId).toBe(heir.userId);
+    const reports = await db.select().from(s.savedReports).where(eq(s.savedReports.orgId, boss.orgId));
+    expect(reports.every((r) => r.ownerId === heir.userId)).toBe(true);
+    const history = (await as(boss).get(`/api/history/lead/${lead.id}`)).body;
+    expect(history[0]).toMatchObject({ field: "ownerId", oldValue: seller.userId, newValue: heir.userId, source: "system" });
+
+    // Inactive people are listed for admins, not for everyone, and aren't a seat.
+    const list = await people();
+    expect(list.seats).toMatchObject({ active: 3, ending: 0, inactive: 1 });
+    expect((await person(seller.userId)).statusLabel).toBe("Inactive");
+    expect((await people(heir)).people.some((p: { id: string }) => p.id === seller.userId)).toBe(false);
+    expect((await as(boss).get("/api/users")).body.some((u: { id: string }) => u.id === seller.userId)).toBe(false);
+  });
+
+  it("reinstates someone with their old role, leaving their old records where they went", async () => {
+    expect((await as(boss).post(`/api/people/${seller.userId}/undo`)).status).toBe(400);
+    expect((await as(boss).post(`/api/people/${seller.userId}/reinstate`)).status).toBe(204);
+    expect(await person(seller.userId)).toMatchObject({ status: "active", role: "Rep", endsOn: null });
+    expect((await as(seller).get("/api/me")).status).toBe(200);
+    expect((await as(boss).get(`/api/leads/${lead.id}`)).body.ownerId).toBe(heir.userId);
+    expect((await as(boss).post(`/api/people/${seller.userId}/reinstate`)).status).toBe(400);
+  });
+
+  it("can end a seat right away", async () => {
+    const res = await as(boss).post(`/api/people/${quitter.userId}/remove`, { handTo: heir.userId, when: "now" });
+    expect(res.status).toBe(204);
+    expect((await as(quitter).get("/api/me")).status).toBe(401);
+    expect(await membership(quitter)).toMatchObject({ status: "removed" });
+  });
+
+  it("follows removals made in Clerk, when the webhook is signed", async () => {
+    const secret = "whsec_" + Buffer.from("bagger-test-secret-key-32-bytes!").toString("base64");
+    const hooked = createApp(db, async () => null, { clerkWebhookSecret: secret });
+    await db.update(s.organizations).set({ clerkOrgId: "org_clerk_1" }).where(eq(s.organizations.id, boss.orgId));
+    await db.update(s.users).set({ clerkUserId: "user_clerk_heir" }).where(eq(s.users.id, heir.userId));
+    await db.update(s.users).set({ clerkUserId: "user_clerk_boss" }).where(eq(s.users.id, boss.userId));
+    const send = (event: object, sign = true, at = Math.floor(Date.now() / 1000)) => {
+      const body = JSON.stringify(event);
+      return request(hooked)
+        .post("/api/webhooks/clerk")
+        .set("content-type", "application/json")
+        .set("svix-id", "msg_1")
+        .set("svix-timestamp", String(at))
+        .set("svix-signature", sign ? signClerkWebhook(secret, "msg_1", String(at), body) : "v1,AAAA")
+        .send(body);
+    };
+    const removed = (clerkUserId: string) => ({
+      type: "organizationMembership.deleted",
+      data: { organization: { id: "org_clerk_1" }, public_user_data: { user_id: clerkUserId } },
+    });
+
+    expect((await send(removed("user_clerk_heir"), false)).status).toBe(401);
+    expect((await send(removed("user_clerk_heir"), true, Math.floor(Date.now() / 1000) - 3600)).status).toBe(401);
+    expect((await request(app).post("/api/webhooks/clerk").send({})).status).toBe(404); // no secret set
+
+    const ok = await send(removed("user_clerk_heir"));
+    expect(ok.body).toEqual({ ok: true, ended: 1 });
+    expect(await person(heir.userId)).toMatchObject({ status: "ending", handToUserId: boss.userId });
+    // The owner can't be removed this way.
+    expect((await send(removed("user_clerk_boss"))).body.ended).toBe(0);
+    expect((await person(boss.userId)).status).toBe("active");
   });
 });
 
