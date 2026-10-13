@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { CallOutcome } from "./calls";
 import {
   boolean,
   check,
@@ -412,6 +413,8 @@ export const opportunityStageHistory = pgTable(
 
 // ----------------------------------------------------------- activities
 
+export { CALL_OUTCOME_LABELS, CALL_OUTCOMES, type CallOutcome } from "./calls";
+
 export const ACTIVITY_TYPES = ["call", "email", "linkedin", "meeting", "note"] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 /** Open: still to do, with a due date. Completed: done, with the time it happened. */
@@ -650,6 +653,8 @@ export const stepTasks = pgTable(
     /** What was actually used, saved when the task is completed. */
     finalSubject: text("final_subject"),
     finalBody: text("final_body"),
+    /** Phone Call steps: how the call went, chosen by the rep on completing. */
+    callOutcome: text("call_outcome").$type<CallOutcome>(),
     note: text("note"),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedBy: uuid("closed_by").references(() => users.id),

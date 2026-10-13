@@ -611,6 +611,30 @@ describe("the database itself enforces the rules", () => {
     ).rejects.toThrow();
   });
 
+  it("asks how a call went before a Phone Call step can be completed", async () => {
+    const lead = await createLead(db, ctx);
+    const { sequence } = await createSequence(db, ctx, [
+      { type: "phone_call", waitDays: 0 },
+      { type: "phone_call", waitDays: 0 },
+    ]);
+    const { enrollment, task } = await enroll(db, ctx, {
+      sequenceId: sequence.id,
+      person: { leadId: lead.id },
+    });
+    await expectCode(completeTask(db, ctx, task.id), "call_outcome_required");
+    const { nextTask } = await completeTask(db, ctx, task.id, { callOutcome: "no_answer" });
+    const [saved] = await db.select().from(s.stepTasks).where(eq(s.stepTasks.id, task.id));
+    expect(saved.callOutcome).toBe("no_answer");
+    // Skipping needs no outcome and stores none.
+    await skipTask(db, ctx, nextTask!.id);
+    const log = await db
+      .select()
+      .from(s.events)
+      .where(and(eq(s.events.orgId, ctx.orgId), eq(s.events.enrollmentId, enrollment.id)));
+    expect(log.find((e) => e.type === "step.completed")?.data).toEqual({ callOutcome: "no_answer" });
+    expect(log.find((e) => e.type === "step.skipped")?.data).toBeNull();
+  });
+
   it("records an event for each thing that happens", async () => {
     const lead = await createLead(db, ctx);
     const { sequence } = await createSequence(db, ctx, [{ waitDays: 0 }]);

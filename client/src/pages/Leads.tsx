@@ -7,7 +7,8 @@ import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useMe, useOrgUsers, useStatuses } from "@/lib/api";
-import { formatDate, formatPhone } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
+import { PhoneLink } from "@/components/PhoneLink";
 import {
   confirmStatusChange,
   defaultStatus,
@@ -73,7 +74,11 @@ export function LeadsPage() {
     },
     { header: "Title", sort: "title", cell: (l) => l.title ?? "—" },
     { header: "Company", sort: "company", cell: (l) => l.company ?? "—" },
-    { header: "Phone", cell: (l) => formatPhone(l.cellPhone ?? l.directPhone ?? l.hqPhone) },
+    {
+      header: "Phone",
+      cell: (l) => <PhoneLink value={l.cellPhone ?? l.directPhone ?? l.hqPhone} copy={false} />,
+      csv: (l) => l.cellPhone ?? l.directPhone ?? l.hqPhone,
+    },
     { header: "Owner", sort: "owner", cell: (l) => nameOf(users, l.ownerId) },
     {
       header: "Status",

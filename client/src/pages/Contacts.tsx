@@ -7,7 +7,8 @@ import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useApi, useMe, useOrgUsers, useStatuses } from "@/lib/api";
-import { formatDate, formatPhone } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
+import { PhoneLink } from "@/components/PhoneLink";
 import type { Account } from "./Accounts";
 import {
   confirmStatusChange,
@@ -108,7 +109,11 @@ export function ContactsPage() {
     },
     { header: "Title", sort: "title", cell: (c) => c.title ?? "—" },
     { header: "Account", sort: "account", cell: (c) => accountName(c.accountId) },
-    { header: "Phone", cell: (c) => formatPhone(c.cellPhone ?? c.directPhone ?? c.hqPhone) },
+    {
+      header: "Phone",
+      cell: (c) => <PhoneLink value={c.cellPhone ?? c.directPhone ?? c.hqPhone} copy={false} />,
+      csv: (c) => c.cellPhone ?? c.directPhone ?? c.hqPhone,
+    },
     { header: "Owner", sort: "owner", cell: (c) => nameOf(users, c.ownerId) },
     {
       header: "Status",

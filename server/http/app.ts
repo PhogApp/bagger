@@ -508,8 +508,14 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     } else if (err instanceof NotFoundError) {
       res.status(404).json({ error: "not_found", message: err.message });
     } else if (err instanceof SequenceError) {
-      const status = err.code.endsWith("_not_found") ? 404 : 409;
-      res.status(status).json({ error: err.code });
+      const status = err.code.endsWith("_not_found")
+        ? 404
+        : err.code === "call_outcome_required"
+          ? 400
+          : 409;
+      res
+        .status(status)
+        .json({ error: err.code, ...(err.message !== err.code ? { message: err.message } : {}) });
     } else {
       console.error(err);
       res.status(500).json({ error: "server_error" });

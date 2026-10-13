@@ -28,7 +28,9 @@ import { canUse, useApi, useMe } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { RichText, RichTextEditor } from "@/components/RichTextEditor";
 import { htmlToText } from "../../../shared/richtext";
-import { formatDate, formatDay, formatPhone } from "@/lib/utils";
+import { PhoneLink } from "@/components/PhoneLink";
+import { CALL_OUTCOME_LABELS, CALL_OUTCOMES, type CallOutcome } from "../../../shared/calls";
+import { cn, formatDate, formatDay } from "@/lib/utils";
 
 type StepType = "email" | "phone_call" | "linkedin_connect" | "linkedin_message";
 
@@ -176,6 +178,8 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
   const [filter, setFilter] = useState<StepType | "all">("all");
   const [index, setIndex] = useState(0);
   const [note, setNote] = useState("");
+  // Phone Call steps: how the call went, needed to complete.
+  const [outcome, setOutcome] = useState<CallOutcome | null>(null);
   const [snoozeTo, setSnoozeTo] = useState("");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ subject: "", body: "" });
@@ -189,6 +193,7 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
   useEffect(() => {
     setNote("");
     setSnoozeTo("");
+    setOutcome(null);
     setEditing(false);
     setError(null);
   }, [task?.taskId]);
@@ -320,10 +325,19 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
               {task.step.type === "phone_call" ? (
                 <>
                   {phones.length === 0 ? (
-                    <p className="text-sm">No phone number on this record.</p>
+                    <p className="text-sm">
+                      No phone number on this record. You can still complete or skip this step.
+                    </p>
                   ) : (
                     phones.map(([label, number]) => (
-                      <CopyRow key={label} label={`${label} phone`} value={formatPhone(number)} />
+                      <div key={label}>
+                        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          {label} phone
+                        </span>
+                        <p className="text-sm">
+                          <PhoneLink value={number} />
+                        </p>
+                      </div>
                     ))
                   )}
                   {task.callObjectives && (
@@ -441,6 +455,34 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
             />
           </div>
 
+          {task.step.type === "phone_call" && (
+            <div className="space-y-1.5">
+              <Label id="call-outcome-label">How did the call go?</Label>
+              <div className="flex gap-1 rounded-md border p-1" role="radiogroup" aria-labelledby="call-outcome-label">
+                {CALL_OUTCOMES.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={outcome === value}
+                    className={cn(
+                      "flex-1 rounded px-2 py-1.5 text-sm",
+                      outcome === value ? "bg-primary text-primary-foreground" : "hover:bg-muted",
+                    )}
+                    onClick={() => setOutcome(value)}
+                  >
+                    {CALL_OUTCOME_LABELS[value]}
+                  </button>
+                ))}
+              </div>
+              {!outcome && (
+                <p className="text-xs text-muted-foreground">
+                  Choose one to complete the step. Skipping doesn't need one.
+                </p>
+              )}
+            </div>
+          )}
+
           {error && (
             <p role="alert" className="text-sm text-destructive">
               {error}
@@ -449,11 +491,18 @@ function RunStepsPanel({ tasks, loading }: { tasks: Task[]; loading: boolean }) 
 
           <Button
             className="w-full"
-            disabled={act.isPending || editing}
+            disabled={act.isPending || editing || (task.step.type === "phone_call" && !outcome)}
             onClick={() =>
               act.mutate({
-                call: () => api("POST", `${base}/complete`, note ? { note } : {}),
-                done: `${task.step.title} completed for ${who}`,
+                call: () =>
+                  api("POST", `${base}/complete`, {
+                    ...(note ? { note } : {}),
+                    ...(task.step.type === "phone_call" && outcome ? { callOutcome: outcome } : {}),
+                  }),
+                done:
+                  task.step.type === "phone_call" && outcome
+                    ? `${task.step.title} completed for ${who}: ${CALL_OUTCOME_LABELS[outcome]}`
+                    : `${task.step.title} completed for ${who}`,
               })
             }
           >

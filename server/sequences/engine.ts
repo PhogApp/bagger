@@ -2,6 +2,8 @@ import { and, asc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import {
   accounts,
   activities,
+  CALL_OUTCOME_LABELS,
+  type CallOutcome,
   contacts,
   doNotContact,
   enrollments,
@@ -49,7 +51,8 @@ export type SequenceErrorCode =
   | "enrollment_not_paused"
   | "enrollment_ended"
   | "step_not_found"
-  | "invalid_date";
+  | "invalid_date"
+  | "call_outcome_required";
 
 export class SequenceError extends Error {
   constructor(
@@ -359,6 +362,8 @@ export async function enroll(
 
 export interface CloseTaskInput extends Clock {
   note?: string;
+  /** Required to complete a Phone Call step; ignored for other steps and for skipping. */
+  callOutcome?: CallOutcome;
 }
 
 async function closeTask(
@@ -374,6 +379,16 @@ async function closeTask(
     if (task.state !== "open") throw new SequenceError("task_not_open");
     const enrollment = await lockEnrollment(tx, ctx, task.enrollmentId);
     if (enrollment.state !== "active") throw new SequenceError("enrollment_not_active");
+    const [step] = await tx
+      .select({ type: sequenceSteps.type })
+      .from(sequenceSteps)
+      .where(eq(sequenceSteps.id, task.stepId));
+    // Bagger can't see whether a call happened, so the rep says how it went.
+    const callOutcome =
+      outcome === "completed" && step?.type === "phone_call" ? (input.callOutcome ?? null) : null;
+    if (outcome === "completed" && step?.type === "phone_call" && !callOutcome) {
+      throw new SequenceError("call_outcome_required", "Choose how the call went");
+    }
 
     // Save what was actually used, so history survives later template edits.
     const content =
@@ -388,11 +403,16 @@ async function closeTask(
         note: input.note ?? task.note,
         finalSubject: content?.subject ?? null,
         finalBody: content?.body ?? null,
+        callOutcome,
       })
       .where(eq(stepTasks.id, task.id));
-    await logEvent(tx, ctx, `step.${outcome}`, enrollment, { stepId: task.stepId, at });
+    await logEvent(tx, ctx, `step.${outcome}`, enrollment, {
+      stepId: task.stepId,
+      at,
+      ...(callOutcome ? { data: { callOutcome } } : {}),
+    });
     if (outcome === "completed") {
-      await logStepActivity(tx, ctx, task, enrollment, content, input.note, at);
+      await logStepActivity(tx, ctx, task, enrollment, content, input.note, at, callOutcome);
     }
 
     const nextTask = await advance(tx, ctx, enrollment, task.stepId, at);
@@ -420,6 +440,7 @@ async function logStepActivity(
   content: ResolvedContent | undefined,
   note: string | undefined,
   at: Date,
+  callOutcome: CallOutcome | null = null,
 ): Promise<void> {
   const [step] = await tx.select().from(sequenceSteps).where(eq(sequenceSteps.id, task.stepId));
   let accountId: string | null = null;
@@ -432,7 +453,13 @@ async function logStepActivity(
   }
   // The activity log is plain text; an email's HTML becomes readable text there.
   const sent = content?.body ? htmlToText(content.body) : null;
-  const body = [sent, note ? `Note: ${note}` : null].filter(Boolean).join("\n\n");
+  const body = [
+    callOutcome ? `Outcome: ${CALL_OUTCOME_LABELS[callOutcome]}` : null,
+    sent,
+    note ? `Note: ${note}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   await tx.insert(activities).values({
     orgId: ctx.orgId,
     ownerId: ctx.userId,

@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, isNull, max } from "drizzle-orm";
 import { z } from "zod";
 import {
   contacts,
+  CALL_OUTCOMES,
   enrollments,
   leads,
   sequenceSteps,
@@ -457,7 +458,10 @@ export async function getTask(db: Db, actor: Actor, taskId: string) {
   return engine.getTask(db, actor, taskId);
 }
 
-export const closeInput = z.object({ note: z.string().max(5000).optional() });
+export const closeInput = z.object({
+  note: z.string().max(5000).optional(),
+  callOutcome: z.enum(CALL_OUTCOMES).optional(),
+});
 export const snoozeInput = z.object({ dueOn: z.string() });
 export const overrideInput = z.object({
   subject: z.string().nullable().optional(),
