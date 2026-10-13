@@ -74,7 +74,6 @@ export function AccountsPage() {
       object="accounts"
       recordType="account"
       title="Accounts"
-      subtitle="Manage your business accounts"
       singular="Account"
       searchPlaceholder="Search accounts by name or website…"
       fields={fields}

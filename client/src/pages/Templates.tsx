@@ -98,7 +98,6 @@ export function TemplatesPage() {
       object="templates"
       recordType="template"
       title="Templates"
-      subtitle="Email and LinkedIn messages used by your sequences"
       singular="Template"
       searchPlaceholder="Search templates by name, subject, or content…"
       fields={templateFields(users)}
@@ -167,7 +166,7 @@ function UsedIn({ id }: { id: string }) {
     <section className="rounded-lg border bg-background p-5">
       <h2 className="text-sm font-semibold">Used in</h2>
       <p className="mb-3 text-xs text-muted-foreground">
-        Changes here reach these steps right away, including messages already waiting in Run Steps
+        Changes here reach these steps right away, including messages already waiting in Roll the Calls
         that haven't been edited for one person.
       </p>
       {usage.isLoading ? (

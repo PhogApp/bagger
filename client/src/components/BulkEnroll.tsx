@@ -112,7 +112,7 @@ export function BulkEnrollButton({
                   : `${people.length} people`}
               </DialogTitle>
               <DialogDescription>
-                Each person's first step lands in your Run Steps queue. Anyone already in a
+                Each person's first step lands in your Roll the Calls queue. Anyone already in a
                 sequence, or marked Do Not Contact, is skipped.
               </DialogDescription>
             </DialogHeader>

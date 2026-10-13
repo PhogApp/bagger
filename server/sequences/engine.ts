@@ -813,7 +813,7 @@ async function loadTaskViews(
 }
 
 /**
- * The Run Steps queue: open tasks due today or earlier, for active
+ * The Roll the Calls queue: open tasks due today or earlier, for active
  * enrollments. Nothing is scheduled; a task is due when its date has passed.
  */
 export async function getDueTasks(

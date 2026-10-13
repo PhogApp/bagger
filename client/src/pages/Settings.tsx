@@ -113,7 +113,7 @@ function MySettingsSection() {
           ))}
         </select>
         <p className="text-xs text-muted-foreground">
-          Decides when your steps become due and which day counts as "today" in Run Steps. Your
+          Decides when your steps become due and which day counts as "today" in Roll the Calls. Your
           browser reports {browserTimeZone().replace(/_/g, " ")}.
         </p>
       </div>
@@ -383,11 +383,10 @@ function AccountSection() {
   );
 }
 
-function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
+function PageHeader({ title }: { title: string }) {
   return (
     <div className="border-b bg-background px-6 py-4">
       <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-      <p className="text-sm text-muted-foreground">{subtitle}</p>
     </div>
   );
 }
@@ -396,7 +395,7 @@ function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
 export function SettingsPage() {
   return (
     <div>
-      <PageHeader title="Settings" subtitle="Your account and preferences" />
+      <PageHeader title="Settings" />
       <div className="max-w-4xl space-y-6 p-6">
         <AccountSection />
         <MySettingsSection />
@@ -421,7 +420,7 @@ export function AdminPage() {
   }
   return (
     <div>
-      <PageHeader title="Admin" subtitle="Settings and people for your whole organization" />
+      <PageHeader title="Admin" />
       <div className="max-w-4xl space-y-6 p-6">
         <OrganizationSection canEdit={canUse(me, "setup.org_settings")} />
         <StatusSettings canEdit={canUse(me, "setup.org_settings")} />

@@ -469,7 +469,7 @@ describe("pausing and stopping", () => {
   });
 });
 
-describe("the Run Steps queue", () => {
+describe("the Roll the Calls queue", () => {
   it("shows only tasks that are due, and can be filtered by owner", async () => {
     const otherRep = await createUser(db, "Other Rep");
     const { sequence } = await createSequence(db, ctx, [{ waitDays: 0 }, { waitDays: 3 }]);

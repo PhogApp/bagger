@@ -98,7 +98,6 @@ export function SequencesPage() {
       object="sequences"
       recordType="sequence"
       title="Sequences"
-      subtitle="Multi-step outreach, one task at a time"
       singular="Sequence"
       searchPlaceholder="Search sequences by name or description…"
       fields={sequenceFields(users)}

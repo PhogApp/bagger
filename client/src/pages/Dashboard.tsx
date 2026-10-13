@@ -80,18 +80,12 @@ export function DashboardPage() {
   const openTotal = stageRows.reduce((sum, r) => sum + r.amount, 0);
   const openCount = stageRows.reduce((sum, r) => sum + r.count, 0);
   const weighted = stageRows.reduce((sum, r) => sum + (r.amount * (r.probability ?? 0)) / 100, 0);
-  const firstName = me?.user.name.split(" ")[0];
 
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-background px-6 py-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {owner === "me" && firstName ? `Good to see you, ${firstName}` : "Dashboard"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Your day at a glance. Activity counts cover the last 7 days; outcomes the last 30.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         </div>
         {canSeeOthers && (
           <select

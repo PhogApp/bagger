@@ -854,7 +854,7 @@ function EnrollDialog({ sequenceId, onClose }: { sequenceId: string; onClose: ()
         <DialogHeader>
           <DialogTitle>Enroll people</DialogTitle>
           <DialogDescription>
-            Their first step lands in your Run Steps queue. A person can be in one sequence at a
+            Their first step lands in your Roll the Calls queue. A person can be in one sequence at a
             time. To enroll many at once, tick them on the Leads or Contacts list.
           </DialogDescription>
         </DialogHeader>

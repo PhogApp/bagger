@@ -325,7 +325,6 @@ export function OpportunitiesPage() {
       object="opportunities"
       recordType="opportunity"
       title="Opportunities"
-      subtitle="Deals in your pipeline, by stage"
       singular="Opportunity"
       searchPlaceholder="Search opportunities by name…"
       fields={fields}

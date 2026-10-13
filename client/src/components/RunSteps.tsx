@@ -154,7 +154,7 @@ export function RunStepsButton() {
     <>
       <Button onClick={() => setOpen(true)}>
         <Play className="mr-2 h-4 w-4" aria-hidden />
-        Run Steps
+        Roll the Calls
         {count > 0 && (
           <span className="ml-2 rounded-full bg-white/25 px-2 py-0.5 text-xs">{count}</span>
         )}
@@ -162,7 +162,7 @@ export function RunStepsButton() {
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto p-0 sm:max-w-md">
           <SheetHeader className="border-b p-4">
-            <SheetTitle>Run Steps</SheetTitle>
+            <SheetTitle>Roll the Calls</SheetTitle>
             <SheetDescription>Steps due today or earlier, one at a time.</SheetDescription>
           </SheetHeader>
           <RunStepsPanel tasks={tasks.data ?? []} loading={tasks.isLoading} />
