@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useApi, useMe } from "./lib/api";
 import { Toaster } from "./lib/toast";
+import { FullExportButton } from "./components/DataExport";
 import { AccountDetailPage, AccountsPage } from "./pages/Accounts";
 import { ActivitiesPage } from "./pages/Activities";
 import { ContactDetailPage, ContactsPage } from "./pages/Contacts";
@@ -61,10 +62,21 @@ export function App() {
   } else if (me.error) {
     page = <Notice title="Couldn't load your account">{me.error.message}</Notice>;
   } else if (me.data?.billingStatus !== "active") {
+    const canExport = me.data?.permissions["account.full_export"] === true;
     page = (
-      <Notice title="This account is locked">
-        Ask your organization's admin to update the billing details to restore access.
-      </Notice>
+      <div className="p-10 text-center">
+        <h1 className="text-2xl font-semibold tracking-tight">This account is locked</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {canExport
+            ? "Your data is safe. You can still download all of it."
+            : "Ask your organization's admin to update the billing details to restore access."}
+        </p>
+        {canExport && (
+          <div className="mt-4 flex justify-center">
+            <FullExportButton variant="default" />
+          </div>
+        )}
+      </div>
     );
   } else {
     page = (

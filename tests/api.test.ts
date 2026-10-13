@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { strFromU8, unzipSync } from "fflate";
 import request from "supertest";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveActor } from "../server/auth/actor";
@@ -1632,6 +1633,98 @@ describe("logging how a call went", () => {
     expect(skipped.status).toBe(200);
     const [skippedTask] = await db.select().from(s.stepTasks).where(eq(s.stepTasks.id, email.body.nextTask.id));
     expect(skippedTask).toMatchObject({ state: "skipped", callOutcome: null });
+  });
+});
+
+describe("the full data export", () => {
+  let boss: Ctx;
+  let seller: Ctx;
+  const download = (who: Ctx) =>
+    request(app)
+      .get("/api/export")
+      .set("x-user", who.userId)
+      .set("x-org", who.orgId)
+      .buffer(true)
+      .parse((res, done) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => done(null, Buffer.concat(chunks)));
+      });
+  const csv = (files: Record<string, Uint8Array>, name: string) =>
+    strFromU8(files[name]).replace(/^\uFEFF/, "");
+
+  beforeAll(async () => {
+    boss = await createOrg(db, { name: "Export, Inc." });
+    seller = await addMember(db, boss.orgId, "rep", "Sal Seller");
+    await as(boss).post("/api/fields", { object: "leads", label: "Industry", type: "text" });
+    await as(seller).post("/api/leads", { firstName: "Ana", lastName: "Export", email: "ana@export.example", "custom": { industry: "Hospitality" } });
+    const gone = (await as(seller).post("/api/leads", { firstName: "=SUM(1+1)", lastName: "Gone", email: "gone@export.example" })).body;
+    await as(boss).del(`/api/leads/${gone.id}`);
+    await as(outsider).post("/api/leads", { firstName: "Otto", lastName: "Outside", email: "otto@outside.example" });
+  });
+
+  it("downloads every kind of record and its history in one ZIP", async () => {
+    const res = await download(boss);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/zip");
+    expect(res.headers["content-disposition"]).toMatch(/^attachment; filename="bagger-export-export-inc-\d{4}-\d{2}-\d{2}\.zip"$/);
+    const files = unzipSync(new Uint8Array(res.body as Buffer));
+    expect(Object.keys(files).sort()).toEqual(
+      [
+        "README.txt", "accounts.csv", "activities.csv", "contacts.csv", "custom_fields.csv", "do_not_contact.csv",
+        "enrollments.csv", "events.csv", "history.csv", "leads.csv", "opportunities.csv", "opportunity_stage_history.csv",
+        "organization.csv", "saved_reports.csv", "sequence_steps.csv", "sequences.csv", "statuses.csv", "step_tasks.csv",
+        "templates.csv", "users.csv",
+      ].sort(),
+    );
+    // Starts with a byte-order mark, so Excel reads it as UTF-8.
+    expect([...files["leads.csv"].slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+
+    const leadsCsv = csv(files, "leads.csv");
+    const [header, ...rows] = leadsCsv.trim().split("\r\n");
+    const cols = header.split(",");
+    expect(cols).toContain("owner_name");
+    expect(cols).toContain("deleted_at");
+    expect(cols.at(-1)).toBe("Industry");
+    expect(cols).not.toContain("org_id");
+    expect(rows).toHaveLength(2);
+    const ana = rows.find((r) => r.includes("Ana"))!.split(",");
+    expect(ana[cols.indexOf("owner_name")]).toBe("Sal Seller");
+    expect(ana.at(-1)).toBe("Hospitality");
+    // The deleted lead is there, marked deleted, with its formula-like name kept as text.
+    const gone = rows.find((r) => r.includes("Gone"))!.split(",");
+    expect(gone[cols.indexOf("first_name")]).toBe("'=SUM(1+1)");
+    expect(gone[cols.indexOf("deleted_at")]).toMatch(/^\d{4}-/);
+
+    expect(leadsCsv).not.toContain("Otto");
+    const history = csv(files, "history.csv");
+    expect(history.split("\r\n")[0]).toContain("user_name");
+    expect(history).toContain("Sal Seller");
+    expect(history).toContain("delete");
+    expect(csv(files, "users.csv")).toContain("Sal Seller");
+    expect(csv(files, "organization.csv")).toContain('"Export, Inc."');
+    expect(strFromU8(files["README.txt"])).toContain("Bagger export for Export, Inc.");
+
+    // Who exported, and when, is recorded.
+    const logged = await db.select().from(s.events).where(eq(s.events.orgId, boss.orgId));
+    expect(logged.find((e) => e.type === "data.exported")).toMatchObject({ actorId: boss.userId });
+  });
+
+  it("is for admins only", async () => {
+    expect((await as(seller).get("/api/export")).status).toBe(403);
+  });
+
+  it("still works on a locked account, when nothing else does", async () => {
+    await db.update(s.organizations).set({ billingStatus: "locked" }).where(eq(s.organizations.id, boss.orgId));
+    try {
+      expect((await as(boss).get("/api/leads")).status).toBe(402);
+      const res = await download(boss);
+      expect(res.status).toBe(200);
+      expect(Object.keys(unzipSync(new Uint8Array(res.body as Buffer)))).toContain("leads.csv");
+      expect((await as(seller).get("/api/export")).status).toBe(403);
+    } finally {
+      await db.update(s.organizations).set({ billingStatus: "active" }).where(eq(s.organizations.id, boss.orgId));
+    }
   });
 });
 

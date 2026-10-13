@@ -17,6 +17,7 @@ import { StatusSettings } from "@/components/StatusSettings";
 import { canUse, isAdmin, useApi, useMe, type OrgUser } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { toast } from "@/lib/toast";
+import { FullExportButton } from "@/components/DataExport";
 
 interface MySettings {
   timezone: string | null;
@@ -426,6 +427,14 @@ export function AdminPage() {
         <StatusSettings canEdit={canUse(me, "setup.org_settings")} />
         {canUse(me, "setup.org_settings") && <FieldSettings />}
         <UsersSection canManage={canUse(me, "account.users_and_roles")} />
+        {canUse(me, "account.full_export") && (
+          <Section
+            title="Export all data"
+            description="Every lead, contact, account, opportunity, activity, template and sequence, with all change history, as CSV files in one ZIP. Available any time, even if the account is locked."
+          >
+            <FullExportButton />
+          </Section>
+        )}
       </div>
     </div>
   );
