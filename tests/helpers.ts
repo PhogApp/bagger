@@ -17,11 +17,11 @@ let counter = 0;
 
 export async function createOrg(
   db: Db,
-  options: { waitDayMode?: "business" | "calendar" } = {},
+  options: { waitDayMode?: "business" | "calendar"; name?: string } = {},
 ): Promise<Ctx> {
   counter++;
   const { orgId, adminUserId } = await provisionOrganization(db, {
-    name: `Org ${counter}`,
+    name: options.name ?? `Org ${counter}`,
     admin: { email: `admin${counter}@example.com`, name: "Admin" },
   });
   if (options.waitDayMode) {

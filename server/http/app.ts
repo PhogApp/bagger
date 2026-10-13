@@ -29,6 +29,7 @@ import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
 import * as activityService from "../activities/service";
 import { globalSearch } from "../search/service";
+import * as exportService from "../export/service";
 import * as dashboard from "../dashboard/service";
 import * as fields from "../fields/service";
 import * as builder from "../reports/builder";
@@ -180,9 +181,27 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     });
   });
 
-  // A locked or cancelled organization can reach /me (above) and nothing
-  // else here. Billing and data-export routes will be registered before this
-  // gate when they are built.
+  // The full data export stays open on a locked or cancelled account, so a
+  // customer can always take their data. Admins only (account.full_export).
+  api.get("/export", async (req, res) => {
+    const actor = actorOf(req);
+    const name = await exportService.exportFileName(db, actor);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      await exportService.writeExport(db, actor, (chunk) => res.write(Buffer.from(chunk)));
+      res.end();
+    } catch (err) {
+      // Part of the file has gone out; end it broken rather than look complete.
+      console.error(err);
+      res.destroy(err as Error);
+    }
+  });
+
+  // A locked or cancelled organization can reach /me, the export (above) and
+  // nothing else here. Billing routes will be registered before this gate when
+  // they are built.
   api.use((req, res, next) => {
     if (actorOf(req).billingStatus !== "active") {
       res.status(402).json({ error: "account_locked", status: actorOf(req).billingStatus });
