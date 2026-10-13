@@ -116,7 +116,7 @@ await seq.addStep(db, admin, outbound.id, {
   callObjectives: "Confirm they own the ERP decision",
   callScript: "Ask how month-end close went last quarter.",
 });
-// Give both preview users something in their Run Steps queue.
+// Give both preview users something in their Roll the Calls queue.
 const enrolled = await leadService.list(db, admin, {});
 for (const lead of enrolled.slice(0, 4)) {
   const owner = lead.ownerId === rep.userId ? rep : admin;

@@ -149,7 +149,6 @@ export function ContactsPage() {
       object="contacts"
       recordType="contact"
       title="Contacts"
-      subtitle="Manage your contact relationships"
       singular="Contact"
       searchPlaceholder="Search contacts by name, email, or phone…"
       fields={fields}

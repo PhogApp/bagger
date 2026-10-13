@@ -58,7 +58,7 @@ export async function getDashboard(db: Db, actor: Actor, raw: unknown, now = new
   const weekAgo = new Date(now.getTime() - 7 * DAY);
   const monthAgo = new Date(now.getTime() - 30 * DAY);
 
-  // ---- steps waiting in Run Steps
+  // ---- steps waiting in Roll the Calls
   const [steps] = await db
     .select({
       dueToday: sql<number>`count(*) filter (where ${stepTasks.dueOn} = ${today})::int`,

@@ -519,9 +519,6 @@ export function ReportsPage() {
     <div>
       <div className="border-b bg-background px-6 py-4">
         <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
-        <p className="text-sm text-muted-foreground">
-          How sequences, activity, the pipeline and lead conversion are going.
-        </p>
         {tab !== "custom" && (
           <div className="mt-4 flex flex-wrap items-end gap-3">
             <div className="space-y-1">

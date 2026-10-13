@@ -114,7 +114,6 @@ export function LeadsPage() {
       object="leads"
       recordType="lead"
       title="Leads"
-      subtitle="Manage your sales leads"
       singular="Lead"
       searchPlaceholder="Search leads by name, email, company, or phone…"
       fields={fields}

@@ -443,7 +443,7 @@ export async function stop(db: Db, actor: Actor, enrollmentId: string, raw: unkn
 
 // --------------------------------------------------------------- tasks
 
-/** The Run Steps queue. Defaults to the actor's own tasks. */
+/** The Roll the Calls queue. Defaults to the actor's own tasks. */
 export async function dueTasks(db: Db, actor: Actor, options: { ownerId?: string | "all" } = {}) {
   const ownerId = options.ownerId ?? actor.userId;
   if (ownerId !== actor.userId) requireTool(actor.permissions, "sequences.manage_others");

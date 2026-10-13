@@ -107,9 +107,6 @@ export function OrganizationPage() {
     <div>
       <div className="border-b bg-background px-6 py-4">
         <h1 className="text-2xl font-semibold tracking-tight">Organization</h1>
-        <p className="text-sm text-muted-foreground">
-          Only you see this page, as the owner of {orgName}
-        </p>
       </div>
       <div className="max-w-4xl space-y-6 p-6">
         <Card title="Name and logo" description="How your organization appears to your team.">

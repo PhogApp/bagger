@@ -306,10 +306,6 @@ export function ActivitiesPage() {
       <div className="flex items-center justify-between border-b bg-background px-6 py-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Activities</h1>
-          <p className="text-sm text-muted-foreground">
-            Calls, emails, LinkedIn touches, meetings and notes on every lead, contact, account and
-            opportunity
-          </p>
         </div>
         {can.canCreate && (
           <div className="flex gap-2">

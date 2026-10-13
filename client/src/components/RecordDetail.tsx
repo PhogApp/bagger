@@ -373,7 +373,7 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     queryClient.setQueryData(key, updated);
     await queryClient.invalidateQueries({ queryKey: [props.object], refetchType: "none" });
     await queryClient.invalidateQueries({ queryKey: ["history", props.recordType, props.id] });
-    // Run Steps shows names and messages from records and templates.
+    // Roll the Calls shows names and messages from records and templates.
     await queryClient.invalidateQueries({ queryKey: ["tasks"] });
   };
   const patch = async (name: string, value: unknown) =>

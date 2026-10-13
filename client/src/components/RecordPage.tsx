@@ -181,7 +181,6 @@ export interface RecordPageProps<T extends BaseRecord> {
   /** Name used by audit history, e.g. "lead". */
   recordType: string;
   title: string;
-  subtitle: string;
   singular: string;
   searchPlaceholder: string;
   fields: Field[];
@@ -710,7 +709,6 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       <div className="flex items-center justify-between border-b bg-background px-6 py-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{props.title}</h1>
-          <p className="text-sm text-muted-foreground">{props.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           {props.headerActions}
