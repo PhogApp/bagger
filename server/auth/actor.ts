@@ -2,6 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { memberships, organizations, roles } from "../../shared/schema";
 import type { Ctx, Db } from "../db/types";
 import type { PermissionMap } from "./permissions";
+import { finalizeDue } from "../people/service";
 
 /** The signed-in user, their organization, and what their role allows. */
 export interface Actor extends Ctx {
@@ -20,6 +21,8 @@ export async function resolveActor(
   db: Db,
   who: { orgId: string; userId: string },
 ): Promise<Actor | null> {
+  // A seat whose last day has passed ends now, before anyone is let in.
+  await finalizeDue(db, who.orgId);
   const [row] = await db
     .select({
       permissions: roles.permissions,

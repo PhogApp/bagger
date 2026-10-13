@@ -35,3 +35,7 @@ services:
         sync: false
       - key: CLERK_SECRET_KEY
         sync: false
+      # Signing secret of the Clerk webhook endpoint (organizationMembership.deleted,
+      # user.deleted). Optional: without it, removals are made in Admin only.
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false

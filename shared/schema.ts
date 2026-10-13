@@ -248,10 +248,18 @@ export const memberships = pgTable(
       .references(() => roles.id),
     status: membershipStatusEnum("status").notNull().default("active"),
     /** Last day of access when a seat has been removed mid-month. */
-    endsOn: date("ends_on"),
+    endsOn: date("ends_on", { mode: "string" }),
+    /** Who receives this person's records and sequences when the seat ends. */
+    handToUserId: uuid("hand_to_user_id").references(() => users.id),
+    /** Who removed them, and when the seat actually ended. */
+    removedBy: uuid("removed_by").references(() => users.id),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("memberships_org_user_uq").on(t.orgId, t.userId)],
+  (t) => [
+    uniqueIndex("memberships_org_user_uq").on(t.orgId, t.userId),
+    index("memberships_ending_idx").on(t.orgId, t.status, t.endsOn),
+  ],
 );
 
 // ------------------------------------------------ people and companies

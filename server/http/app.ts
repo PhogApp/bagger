@@ -30,6 +30,8 @@ import * as organization from "../orgs/organization";
 import * as activityService from "../activities/service";
 import { globalSearch } from "../search/service";
 import * as exportService from "../export/service";
+import * as people from "../people/service";
+import { verifyClerkWebhook, type ClerkEvent } from "../people/clerk-webhook";
 import * as dashboard from "../dashboard/service";
 import * as fields from "../fields/service";
 import * as builder from "../reports/builder";
@@ -139,16 +141,60 @@ export interface AppOptions {
   onRoleChange?: settings.RoleChangeListener;
   /** Folder holding the built web client. Omitted in tests. */
   staticDir?: string;
+  /** Signing secret for Clerk's webhooks (CLERK_WEBHOOK_SECRET). Without it the endpoint is off. */
+  clerkWebhookSecret?: string;
 }
 
 export function createApp(db: Db, authenticate: Authenticator, options: AppOptions = {}) {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
-  app.use(express.json({ limit: "8mb" }));
+  app.use(
+    express.json({
+      limit: "8mb",
+      // Webhook signatures are checked against the exact bytes that were sent.
+      verify: (req, _res, buf) => {
+        (req as Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  // Clerk tells Bagger when someone is removed from an organization or deletes
+  // their sign-in. Not behind sign-in: the signature proves it came from Clerk.
+  app.post("/api/webhooks/clerk", async (req, res) => {
+    const secret = options.clerkWebhookSecret;
+    if (!secret) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const raw = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from("");
+    const ok = verifyClerkWebhook(
+      secret,
+      {
+        id: req.header("svix-id"),
+        timestamp: req.header("svix-timestamp"),
+        signature: req.header("svix-signature"),
+      },
+      raw,
+    );
+    if (!ok) {
+      res.status(401).json({ error: "bad_signature" });
+      return;
+    }
+    const event = req.body as ClerkEvent;
+    let ended = 0;
+    if (event.type === "organizationMembership.deleted") {
+      const clerkUserId = event.data.public_user_data?.user_id;
+      const clerkOrgId = event.data.organization?.id;
+      if (clerkUserId && clerkOrgId) ended = await people.removedInClerk(db, { clerkUserId, clerkOrgId });
+    } else if (event.type === "user.deleted" && event.data.id) {
+      ended = await people.removedInClerk(db, { clerkUserId: event.data.id });
+    }
+    res.json({ ok: true, ended });
   });
   app.get("/api/config", (_req, res) => {
     res.json(options.publicConfig ?? {});
@@ -224,6 +270,26 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     res.json(await settings.updateOrgSettings(db, actorOf(req), req.body));
   });
   /** People in this organization, for owner pickers and the users page. */
+  // ---- people: removing, undoing, reinstating
+  api.get("/people", async (req, res) => {
+    res.json(await people.listPeople(db, actorOf(req)));
+  });
+  api.post("/people/:id/remove", async (req, res) => {
+    await people.removePerson(db, actorOf(req), id(req), req.body);
+    res.status(204).end();
+  });
+  api.post("/people/:id/undo", async (req, res) => {
+    await people.undoRemoval(db, actorOf(req), id(req));
+    res.status(204).end();
+  });
+  api.put("/people/:id/hand-to", async (req, res) => {
+    await people.changeHandTo(db, actorOf(req), id(req), req.body);
+    res.status(204).end();
+  });
+  api.post("/people/:id/reinstate", async (req, res) => {
+    await people.reinstatePerson(db, actorOf(req), id(req));
+    res.status(204).end();
+  });
   api.get("/users", async (req, res) => {
     res.json(await settings.listUsers(db, actorOf(req)));
   });

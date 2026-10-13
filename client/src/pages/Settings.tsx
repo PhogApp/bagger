@@ -2,22 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { LogOut, UserPlus } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { Avatar } from "@/components/AppLayout";
 import { FieldSettings } from "@/components/FieldSettings";
 import { StatusSettings } from "@/components/StatusSettings";
-import { canUse, isAdmin, useApi, useMe, type OrgUser } from "@/lib/api";
+import { canUse, isAdmin, useApi, useMe } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { toast } from "@/lib/toast";
 import { FullExportButton } from "@/components/DataExport";
+import { PeopleSettings } from "@/components/PeopleSettings";
 
 interface MySettings {
   timezone: string | null;
@@ -27,10 +20,6 @@ interface MySettings {
 interface OrgSettings {
   waitDayMode: "business" | "calendar";
   timezone: string;
-}
-interface Role {
-  id: string;
-  name: string;
 }
 
 const selectClass =
@@ -231,120 +220,6 @@ function OrganizationSection({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-function UsersSection({ canManage }: { canManage: boolean }) {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  const { data: me } = useMe();
-  const users = useQuery({
-    queryKey: ["users"],
-    queryFn: () =>
-      api<(OrgUser & { roleId: string; isOwner: boolean })[]>("GET", "/api/users"),
-  });
-  const roles = useQuery({ queryKey: ["roles"], queryFn: () => api<Role[]>("GET", "/api/roles") });
-  const { manageMembers } = useSession();
-
-  const change = useMutation({
-    mutationFn: ({ userId, roleId }: { userId: string; roleId: string }) =>
-      api("PUT", `/api/users/${userId}/role`, { roleId }),
-    onSuccess: (_result, { userId, roleId }) => {
-      const who = users.data?.find((u) => u.id === userId)?.name ?? "Their";
-      const role = roles.data?.find((r) => r.id === roleId)?.name ?? "the new role";
-      toast.success(`${who} is now ${/^[AEIOU]/i.test(role) ? "an" : "a"} ${role}`);
-    },
-    onError: (e: Error) => toast.error(e.message),
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["users"] });
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
-    },
-  });
-
-  return (
-    <Section
-      title="Users and roles"
-      description={
-        canManage
-          ? "New people join as a Rep. Change their role here."
-          : "The people in your organization."
-      }
-    >
-      {canManage && manageMembers && (
-        <div className="mb-4">
-          <Button variant="outline" onClick={manageMembers}>
-            <UserPlus className="mr-2 h-4 w-4" aria-hidden />
-            Invite or remove people
-          </Button>
-        </div>
-      )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead className="w-56">Role</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {users.data?.map((u) => (
-            <TableRow key={u.id}>
-              <TableCell className="font-medium">
-                {u.name}
-                {u.id === me?.user.id && (
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">you</span>
-                )}
-                {u.isOwner && (
-                  <span className="ml-2 rounded-full bg-brand-ocean/15 px-2 py-0.5 text-xs font-medium text-brand-deep">
-                    Owner
-                  </span>
-                )}
-              </TableCell>
-              <TableCell>{u.email}</TableCell>
-              <TableCell>
-                {canManage ? (
-                  <select
-                    aria-label={`Role for ${u.name}`}
-                    className={selectClass}
-                    value={u.roleId}
-                    // The owner must stay an Admin until ownership is transferred.
-                    disabled={change.isPending || u.isOwner}
-                    title={u.isOwner ? "The owner is always an Admin" : undefined}
-                    onChange={(e) => change.mutate({ userId: u.id, roleId: e.target.value })}
-                  >
-                    {roles.data?.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  u.role
-                )}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      <dl className="mt-4 grid gap-x-6 gap-y-1 text-xs text-muted-foreground sm:grid-cols-2">
-        <div>
-          <dt className="inline font-medium text-foreground">Admin: </dt>
-          <dd className="inline">everything, including settings, users and billing.</dd>
-        </div>
-        <div>
-          <dt className="inline font-medium text-foreground">Manager: </dt>
-          <dd className="inline">all records, delete, export, and other people's queues.</dd>
-        </div>
-        <div>
-          <dt className="inline font-medium text-foreground">Rep: </dt>
-          <dd className="inline">view and edit all records, run their own queue. No delete.</dd>
-        </div>
-        <div>
-          <dt className="inline font-medium text-foreground">Read-only: </dt>
-          <dd className="inline">view records and reports only.</dd>
-        </div>
-      </dl>
-    </Section>
-  );
-}
-
 function AccountSection() {
   const { data: me } = useMe();
   const { userName, userImageUrl, orgName, orgSwitcher, manageAccount, signOut } = useSession();
@@ -426,7 +301,7 @@ export function AdminPage() {
         <OrganizationSection canEdit={canUse(me, "setup.org_settings")} />
         <StatusSettings canEdit={canUse(me, "setup.org_settings")} />
         {canUse(me, "setup.org_settings") && <FieldSettings />}
-        <UsersSection canManage={canUse(me, "account.users_and_roles")} />
+        <PeopleSettings canManage={canUse(me, "account.users_and_roles")} />
         {canUse(me, "account.full_export") && (
           <Section
             title="Export all data"
