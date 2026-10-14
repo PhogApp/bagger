@@ -22,6 +22,9 @@ import {
 import { localDate } from "../server/sequences/dates";
 import * as seq from "../server/sequences/service";
 import { addMember, createOrg, createTestDb } from "./helpers";
+import { FakeGateway } from "../server/billing/gateway";
+import { memberships, organizations } from "../shared/schema";
+import { runBillingCycle } from "../server/billing/service";
 
 const db = await createTestDb();
 // Calendar days, so the sample queue has steps in it on weekends too.
@@ -140,6 +143,7 @@ for (const lead of enrolled.slice(0, 4)) {
 
 // PREVIEW_AS=rep shows the screens as a Rep instead of an Admin.
 const viewer = process.env.PREVIEW_AS === "rep" ? repCtx : adminCtx;
+const previewBilling = new FakeGateway();
 const app = createApp(
   db,
   async (req) => {
@@ -155,7 +159,21 @@ const app = createApp(
       devUserName: viewer === repCtx ? "Ray Rep" : "Admin",
     },
     staticDir: path.resolve("dist/public"),
+    // PREVIEW_BILLING=1 tries billing with a stand-in for Stripe.
+    billing: process.env.PREVIEW_BILLING === "1" ? previewBilling : null,
   },
 );
+// Bill now, as on the 1st, by pretending the organization started last month.
+if (process.env.PREVIEW_BILLING === "1") {
+  app.post("/preview/bill-now", async (_req, res) => {
+    await db.update(organizations).set({ createdAt: new Date(Date.now() - 40 * 86_400_000) });
+    await db.update(memberships).set({ seatStartedOn: "2020-01-01" });
+    res.json(await runBillingCycle(db, previewBilling));
+  });
+  app.post("/preview/decline", (req, res) => {
+    previewBilling.decline = req.query.on === "1";
+    res.json({ decline: previewBilling.decline });
+  });
+}
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => console.log(`Preview at http://localhost:${port}`));

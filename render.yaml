@@ -39,3 +39,8 @@ services:
       # user.deleted). Optional: without it, removals are made in Admin only.
       - key: CLERK_WEBHOOK_SECRET
         sync: false
+      # Stripe (test-mode keys on staging). Payments are off until the secret key is set.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false

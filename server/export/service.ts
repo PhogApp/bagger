@@ -10,6 +10,7 @@ import {
   enrollments,
   events,
   fieldHistory,
+  invoices,
   leads,
   memberships,
   opportunities,
@@ -149,6 +150,12 @@ const SHEETS: Sheet[] = [
     table: fieldHistory,
     order: fieldHistory.createdAt,
     about: "Every change to every record: who, when, which field, old and new value.",
+  },
+  {
+    file: "invoices.csv",
+    table: invoices,
+    order: invoices.createdAt,
+    about: "Your monthly bills: the month, amount, lines charged and whether it was paid.",
   },
   {
     file: "events.csv",

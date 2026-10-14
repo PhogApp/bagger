@@ -1673,7 +1673,7 @@ describe("the full data export", () => {
     expect(Object.keys(files).sort()).toEqual(
       [
         "README.txt", "accounts.csv", "activities.csv", "contacts.csv", "custom_fields.csv", "do_not_contact.csv",
-        "enrollments.csv", "events.csv", "history.csv", "leads.csv", "opportunities.csv", "opportunity_stage_history.csv",
+        "enrollments.csv", "events.csv", "history.csv", "invoices.csv", "leads.csv", "opportunities.csv", "opportunity_stage_history.csv",
         "organization.csv", "saved_reports.csv", "sequence_steps.csv", "sequences.csv", "statuses.csv", "step_tasks.csv",
         "templates.csv", "users.csv",
       ].sort(),

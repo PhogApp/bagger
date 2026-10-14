@@ -11,6 +11,8 @@ export interface Actor extends Ctx {
   billingStatus: "active" | "locked" | "cancelled";
   /** True for the single owner of the organization. */
   isOwner: boolean;
+  /** A card is saved for billing. */
+  hasCard: boolean;
 }
 
 /**
@@ -29,6 +31,7 @@ export async function resolveActor(
       roleName: roles.name,
       billingStatus: organizations.billingStatus,
       ownerUserId: organizations.ownerUserId,
+      cardLast4: organizations.cardLast4,
     })
     .from(memberships)
     .innerJoin(roles, eq(memberships.roleId, roles.id))
@@ -42,8 +45,14 @@ export async function resolveActor(
       ),
     );
   if (!row) return null;
-  const { ownerUserId, ...rest } = row;
-  return { orgId: who.orgId, userId: who.userId, ...rest, isOwner: ownerUserId === who.userId };
+  const { ownerUserId, cardLast4, ...rest } = row;
+  return {
+    orgId: who.orgId,
+    userId: who.userId,
+    ...rest,
+    isOwner: ownerUserId === who.userId,
+    hasCard: Boolean(cardLast4),
+  };
 }
 
 /** Is this user an active member of the organization? Used to validate owners. */

@@ -3,6 +3,8 @@ import { clerkAuthenticator, clerkRoleSync, clerkSession } from "./auth/clerk";
 import { connect } from "./db/client";
 import { createApp } from "./http/app";
 import { finalizeAllDue } from "./people/service";
+import { StripeGateway } from "./billing/gateway";
+import { runBillingCycle } from "./billing/service";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -19,6 +21,15 @@ required("CLERK_SECRET_KEY");
 const clerkPublishableKey = required("CLERK_PUBLISHABLE_KEY");
 
 const { db, pool } = connect(databaseUrl);
+
+// Payments switch on when Stripe's secret key is set (test-mode keys on staging).
+const stripeKey = process.env.STRIPE_SECRET_KEY;
+const billingGateway = stripeKey
+  ? new StripeGateway(stripeKey, process.env.STRIPE_WEBHOOK_SECRET || undefined)
+  : null;
+if (stripeKey && !process.env.STRIPE_WEBHOOK_SECRET) {
+  console.warn("STRIPE_WEBHOOK_SECRET is not set: Stripe's later payment updates won't arrive");
+}
 const app = createApp(db, clerkAuthenticator(db), {
   before: [clerkSession()],
   publicConfig: { clerkPublishableKey },
@@ -26,13 +37,23 @@ const app = createApp(db, clerkAuthenticator(db), {
   staticDir: path.resolve("dist/public"),
   // Optional until the webhook is set up in Clerk; removals made in Admin work without it.
   clerkWebhookSecret: process.env.CLERK_WEBHOOK_SECRET || undefined,
+  billing: billingGateway,
 });
 
 // Seats end on their last day even if nobody from that organization signs in.
-const endSeats = () =>
-  finalizeAllDue(db)
-    .then((n) => n > 0 && console.log(`Ended ${n} seat(s) whose last day had passed`))
-    .catch((e: unknown) => console.error("Ending seats failed", e));
+// Bills go out on the 1st; running hourly means a restart never misses one.
+const endSeats = async () => {
+  try {
+    const n = await finalizeAllDue(db);
+    if (n > 0) console.log(`Ended ${n} seat(s) whose last day had passed`);
+    if (billingGateway) {
+      const run = await runBillingCycle(db, billingGateway);
+      if (run.billed + run.failed + run.cancelled > 0) console.log("Billing run", run);
+    }
+  } catch (e) {
+    console.error("Hourly seats and billing run failed", e);
+  }
+};
 void endSeats();
 const seatTimer = setInterval(endSeats, 60 * 60 * 1000);
 
