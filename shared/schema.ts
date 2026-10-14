@@ -77,6 +77,21 @@ export const organizations = pgTable("organizations", {
   ownerUserId: uuid("owner_user_id"),
   /** Optional extra address for invoices and payment notices. */
   billingEmail: text("billing_email"),
+  /** Stripe's customer for this organization, and the card it charges. */
+  stripeCustomerId: text("stripe_customer_id"),
+  cardBrand: text("card_brand"),
+  cardLast4: text("card_last4"),
+  cardExpires: text("card_expires"),
+  /**
+   * The first day that's paid for: the free week runs from the day the first
+   * card is saved up to (not including) this day. Null until there's a card.
+   */
+  trialEndsOn: date("trial_ends_on", { mode: "string" }),
+  /** The day of the first bill (the rest of the month the trial ended in). */
+  firstBilledOn: date("first_billed_on", { mode: "string" }),
+  /** The owner asked to cancel: access lasts through this day, then the account is cancelled. */
+  cancelsOn: date("cancels_on", { mode: "string" }),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -249,6 +264,8 @@ export const memberships = pgTable(
     status: membershipStatusEnum("status").notNull().default("active"),
     /** Last day of access when a seat has been removed mid-month. */
     endsOn: date("ends_on", { mode: "string" }),
+    /** The day this seat started being paid for: joining, or being reinstated. */
+    seatStartedOn: date("seat_started_on", { mode: "string" }).notNull().default(sql`current_date`),
     /** Who receives this person's records and sequences when the seat ends. */
     handToUserId: uuid("hand_to_user_id").references(() => users.id),
     /** Who removed them, and when the seat actually ended. */
@@ -719,4 +736,38 @@ export const events = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("events_org_type_idx").on(t.orgId, t.type, t.occurredAt)],
+);
+
+// --------------------------------------------------------------- billing
+
+/**
+ * One bill per organization per month, made on the 1st for the month ahead:
+ * full seats plus seats added during the month before, prorated by day.
+ * `lines` keeps exactly what was charged. Collected through Stripe.
+ */
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** The month paid for, "2026-11". */
+    period: text("period").notNull(),
+    status: text("status").$type<"open" | "paid" | "failed" | "void">().notNull().default("open"),
+    amountCents: integer("amount_cents").notNull(),
+    lines: jsonb("lines")
+      .$type<{ description: string; amountCents: number; seats?: number }[]>()
+      .notNull(),
+    stripeInvoiceId: text("stripe_invoice_id"),
+    hostedUrl: text("hosted_url"),
+    pdfUrl: text("pdf_url"),
+    failureMessage: text("failure_message"),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("invoices_org_period_uq").on(t.orgId, t.period),
+    index("invoices_stripe_idx").on(t.stripeInvoiceId),
+  ],
 );

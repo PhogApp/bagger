@@ -31,6 +31,8 @@ import * as activityService from "../activities/service";
 import { globalSearch } from "../search/service";
 import * as exportService from "../export/service";
 import * as people from "../people/service";
+import * as billing from "../billing/service";
+import type { BillingGateway } from "../billing/gateway";
 import { verifyClerkWebhook, type ClerkEvent } from "../people/clerk-webhook";
 import * as dashboard from "../dashboard/service";
 import * as fields from "../fields/service";
@@ -143,9 +145,16 @@ export interface AppOptions {
   staticDir?: string;
   /** Signing secret for Clerk's webhooks (CLERK_WEBHOOK_SECRET). Without it the endpoint is off. */
   clerkWebhookSecret?: string;
+  /** Payments. Without it billing is switched off and nobody is asked for a card. */
+  billing?: BillingGateway | null;
 }
 
 export function createApp(db: Db, authenticate: Authenticator, options: AppOptions = {}) {
+  /** With payments on, an organization can't be used until a card is saved. */
+  const effectiveStatus = (actor: Actor) =>
+    options.billing && actor.billingStatus === "active" && !actor.hasCard
+      ? ("setup" as const)
+      : actor.billingStatus;
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
@@ -200,6 +209,27 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     res.json(options.publicConfig ?? {});
   });
 
+  // Stripe tells Bagger when a bill is paid or fails. Its signature proves it came from Stripe.
+  app.post("/api/webhooks/stripe", async (req, res) => {
+    const gateway = options.billing;
+    if (!gateway) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    let event;
+    try {
+      event = gateway.readEvent(
+        (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(""),
+        req.header("stripe-signature") ?? "",
+      );
+    } catch {
+      res.status(400).json({ error: "bad_signature" });
+      return;
+    }
+    const applied = event.kind === "invoice" ? await billing.applyEvent(db, event) : false;
+    res.json({ received: true, applied });
+  });
+
   for (const handler of options.before ?? []) app.use(handler);
 
   const api = express.Router();
@@ -222,7 +252,7 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       orgId: actor.orgId,
       role: actor.roleName,
       permissions: actor.permissions,
-      billingStatus: actor.billingStatus,
+      billingStatus: effectiveStatus(actor),
       isOwner: actor.isOwner,
     });
   });
@@ -248,9 +278,37 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   // A locked or cancelled organization can reach /me, the export (above) and
   // nothing else here. Billing routes will be registered before this gate when
   // they are built.
+  // Billing belongs to the owner, and stays reachable when the account is
+  // locked, waiting for a card, or cancelled, so it can be put right.
+  api.get("/billing", async (req, res) => {
+    res.json(await billing.getBilling(db, actorOf(req), options.billing ?? null));
+  });
+  api.post("/billing/card", async (req, res) => {
+    const origin = `${req.protocol}://${req.get("host")}`;
+    res.json(await billing.startCardSetup(db, actorOf(req), options.billing ?? null, origin));
+  });
+  api.post("/billing/card/confirm", async (req, res) => {
+    res.json(await billing.confirmCardSetup(db, actorOf(req), options.billing ?? null, req.body));
+  });
+  api.post("/billing/pay", async (req, res) => {
+    res.json(await billing.payNow(db, actorOf(req), options.billing ?? null));
+  });
+  api.post("/billing/cancel", async (req, res) => {
+    res.json(await billing.cancelAccount(db, actorOf(req)));
+  });
+  api.post("/billing/undo-cancel", async (req, res) => {
+    await billing.undoCancel(db, actorOf(req));
+    res.status(204).end();
+  });
+  api.post("/billing/reactivate", async (req, res) => {
+    await billing.reactivate(db, actorOf(req));
+    res.status(204).end();
+  });
+
   api.use((req, res, next) => {
-    if (actorOf(req).billingStatus !== "active") {
-      res.status(402).json({ error: "account_locked", status: actorOf(req).billingStatus });
+    const status = effectiveStatus(actorOf(req));
+    if (status !== "active") {
+      res.status(402).json({ error: "account_locked", status });
       return;
     }
     next();

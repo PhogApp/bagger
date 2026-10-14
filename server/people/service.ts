@@ -218,7 +218,15 @@ export async function reinstatePerson(db: Db, actor: Actor, userId: string) {
     }
     await tx
       .update(memberships)
-      .set({ status: "active", endsOn: null, handToUserId: null, removedBy: null, endedAt: null })
+      // A paid seat again from today: the rest of this month is prorated on the next 1st.
+      .set({
+        status: "active",
+        endsOn: null,
+        handToUserId: null,
+        removedBy: null,
+        endedAt: null,
+        seatStartedOn: (await orgDates(tx, actor.orgId)).today,
+      })
       .where(eq(memberships.id, target.membership.id));
   });
 }

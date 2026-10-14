@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { memberships, organizations, roles, users } from "../../shared/schema";
 import type { Db } from "../db/types";
 import { createOrganization } from "../orgs/provision";
@@ -112,7 +112,13 @@ async function createMissing(
         .select({ id: roles.id })
         .from(roles)
         .where(and(eq(roles.orgId, orgId), eq(roles.presetKey, presetKey)));
-      await tx.insert(memberships).values({ orgId, userId, roleId: role.id });
+      await tx.insert(memberships).values({
+        orgId,
+        userId,
+        roleId: role.id,
+        // The day they joined in the organization's own time zone, for proration.
+        seatStartedOn: sql`(now() at time zone coalesce((select s.timezone from org_settings s where s.org_id = ${orgId}), 'America/Chicago'))::date`,
+      });
     }
     if (isNewOrg) {
       // Whoever creates an organization owns it.

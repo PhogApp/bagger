@@ -85,6 +85,20 @@
       "when": 1791895881423,
       "tag": "0011_membership_handover",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791978685483,
+      "tag": "0012_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791980630607,
+      "tag": "0013_billing_trial",
+      "breakpoints": true
     }
   ]
 }

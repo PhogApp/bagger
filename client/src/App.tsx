@@ -5,6 +5,9 @@ import { useEffect } from "react";
 import { useApi, useMe } from "./lib/api";
 import { Toaster } from "./lib/toast";
 import { FullExportButton } from "./components/DataExport";
+import { Button } from "./components/ui/button";
+import { BillingPanel, CardReturn, useAddCard } from "./components/BillingPanel";
+import type { Me } from "./lib/api";
 import { AccountDetailPage, AccountsPage } from "./pages/Accounts";
 import { ActivitiesPage } from "./pages/Activities";
 import { ContactDetailPage, ContactsPage } from "./pages/Contacts";
@@ -62,22 +65,7 @@ export function App() {
   } else if (me.error) {
     page = <Notice title="Couldn't load your account">{me.error.message}</Notice>;
   } else if (me.data?.billingStatus !== "active") {
-    const canExport = me.data?.permissions["account.full_export"] === true;
-    page = (
-      <div className="p-10 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">This account is locked</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {canExport
-            ? "Your data is safe. You can still download all of it."
-            : "Ask your organization's admin to update the billing details to restore access."}
-        </p>
-        {canExport && (
-          <div className="mt-4 flex justify-center">
-            <FullExportButton variant="default" />
-          </div>
-        )}
-      </div>
-    );
+    page = <AccountGate me={me.data!} />;
   } else {
     page = (
       <Switch>
@@ -108,8 +96,64 @@ export function App() {
   }
   return (
     <>
+      <CardReturn />
       <AppLayout>{page}</AppLayout>
       <Toaster />
     </>
+  );
+}
+
+const GATE_TITLE = {
+  setup: "Add a card to start your free week",
+  locked: "This account is locked",
+  cancelled: "This account is cancelled",
+} as const;
+
+/**
+ * An account that isn't open: waiting for a card, locked by a failed charge,
+ * or cancelled. The owner can put it right from here; admins can still take
+ * all the data; everyone else is told who to ask.
+ */
+function AccountGate({ me }: { me: Me }) {
+  const status = me.billingStatus as keyof typeof GATE_TITLE;
+  const canExport = me.permissions["account.full_export"] === true;
+  const addCard = useAddCard();
+  const text = me.isOwner
+    ? {
+        setup:
+          "Your first week is free. Bagger is then $7.99 per user per month: when the trial ends you're charged for the rest of that month, then on the 1st of each month. Cancel during the trial and nothing is charged.",
+        locked: "The last charge didn't go through. Pay it below to open the account again.",
+        cancelled: "Your data is kept. Reactivate below to pick up where you left off.",
+      }[status]
+    : {
+        setup: "Your organization's owner needs to add a card before Bagger can be used.",
+        locked: "Ask your organization's owner to update the card to restore access.",
+        cancelled: "Your organization's account is cancelled. Ask its owner to reactivate it.",
+      }[status];
+  return (
+    <div className="mx-auto max-w-2xl space-y-6 p-6 sm:p-10">
+      <div className="text-center">
+        <h1 className="text-2xl font-semibold tracking-tight">{GATE_TITLE[status]}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{text}</p>
+        {me.isOwner && status === "setup" && (
+          <div className="mt-4 flex justify-center">
+            <Button disabled={addCard.isPending} onClick={() => addCard.mutate()}>
+              {addCard.isPending ? "Opening the card page…" : "Add a card"}
+            </Button>
+          </div>
+        )}
+      </div>
+      {me.isOwner && status !== "setup" && (
+        <section className="rounded-lg border bg-background p-5 text-left">
+          <BillingPanel />
+        </section>
+      )}
+      {canExport && status !== "setup" && (
+        <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+          <span>Your data is safe. You can download all of it at any time.</span>
+          <FullExportButton />
+        </div>
+      )}
+    </div>
   );
 }

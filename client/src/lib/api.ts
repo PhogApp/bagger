@@ -82,7 +82,8 @@ export interface Me {
   orgId: string;
   role: string;
   permissions: Record<string, string | boolean>;
-  billingStatus: "active" | "locked" | "cancelled";
+  /** "setup": payments are on and no card has been saved yet. */
+  billingStatus: "active" | "locked" | "cancelled" | "setup";
   /** True for the one person who owns the organization. */
   isOwner: boolean;
 }

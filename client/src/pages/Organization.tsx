@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useApi, useMe } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { toast } from "@/lib/toast";
+import { BillingPanel } from "@/components/BillingPanel";
 
 interface Person {
   id: string;
@@ -200,7 +201,7 @@ export function OrganizationPage() {
 
         <Card
           title="Billing"
-          description="Invoices and payment notices go to you. Add a second address for a finance contact."
+          description="$7.99 per user per month after a free week, billed on the 1st. Receipts and payment notices go to you."
         >
           <div className="max-w-md space-y-1.5">
             <Label htmlFor="billing-email">Additional billing email (optional)</Label>
@@ -220,9 +221,9 @@ export function OrganizationPage() {
               Save
             </Button>
           </div>
-          <p className="mt-4 border-t pt-4 text-sm text-muted-foreground">
-            Your card, invoices and seat count will appear here once payments are switched on.
-          </p>
+          <div className="mt-4 border-t pt-4">
+            <BillingPanel />
+          </div>
         </Card>
       </div>
     </div>
