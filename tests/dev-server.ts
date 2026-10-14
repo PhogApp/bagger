@@ -8,7 +8,7 @@
  * which is why this file lives under tests/ and is never part of the build
  * that Render runs. The production server ignores those headers.
  */
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import path from "node:path";
 import { resolveActor } from "../server/auth/actor";
 import { createApp } from "../server/http/app";
@@ -24,7 +24,7 @@ import { localDate } from "../server/sequences/dates";
 import * as seq from "../server/sequences/service";
 import { addMember, createOrg, createTestDb } from "./helpers";
 import { FakeGateway } from "../server/billing/gateway";
-import { memberships, organizations } from "../shared/schema";
+import { invoices, memberships, organizations, users } from "../shared/schema";
 import { runBillingCycle } from "../server/billing/service";
 
 const db = await createTestDb();
@@ -142,6 +142,67 @@ for (const lead of enrolled.slice(0, 4)) {
   }
 }
 
+// Other customers, for the staff console: one in each state.
+const staffDay = localDate(new Date(), "America/Chicago");
+const shiftDay = (by: number) => {
+  const d = new Date(`${staffDay}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + by);
+  return d.toISOString().slice(0, 10);
+};
+const samples: [string, number, Partial<typeof organizations.$inferInsert>, number | null][] = [
+  ["Northwind Traders", 4, { trialEndsOn: shiftDay(5) }, null],
+  ["Tidewater Supply", 7, { trialEndsOn: "2026-08-20", firstBilledOn: "2026-08-20" }, 5593],
+  [
+    "Halvorsen Freight",
+    2,
+    { trialEndsOn: "2026-09-02", firstBilledOn: "2026-09-02", billingStatus: "locked" },
+    -1598,
+  ],
+  [
+    "Redfield Energy",
+    3,
+    { trialEndsOn: "2026-07-10", firstBilledOn: "2026-07-10", cancelsOn: shiftDay(17) },
+    2397,
+  ],
+  [
+    "Connectronics",
+    1,
+    {
+      trialEndsOn: "2026-06-01",
+      firstBilledOn: "2026-06-01",
+      billingStatus: "cancelled",
+      cancelledAt: new Date("2026-09-01T05:00:00Z"),
+    },
+    799,
+  ],
+  ["Abandoned Signup LLC", 1, { cardLast4: null }, null],
+];
+for (const [name, people, state, billCents] of samples) {
+  const owner = await createOrg(db, { name });
+  for (let i = 1; i < people; i++) await addMember(db, owner.orgId, "rep", `Rep ${i} of ${name}`);
+  await db
+    .update(organizations)
+    .set({
+      cardBrand: "visa",
+      cardLast4: "4242",
+      cardExpires: "12/2030",
+      stripeCustomerId: `cus_preview_${people}`,
+      ...state,
+    })
+    .where(eq(organizations.id, owner.orgId));
+  if (billCents !== null) {
+    await db.insert(invoices).values({
+      orgId: owner.orgId,
+      period: "2026-10",
+      amountCents: Math.abs(billCents),
+      lines: [{ description: "Seats", amountCents: Math.abs(billCents) }],
+      status: billCents < 0 ? "failed" : "paid",
+      failureMessage: billCents < 0 ? "Your card was declined." : null,
+    });
+  }
+}
+const [viewerUser] = await db.select().from(users).where(eq(users.id, adminCtx.userId));
+
 // PREVIEW_AS=rep shows the screens as a Rep instead of an Admin.
 const viewer = process.env.PREVIEW_AS === "rep" ? repCtx : adminCtx;
 const previewBilling = new FakeGateway();
@@ -162,6 +223,8 @@ const app = createApp(
     staticDir: path.resolve("dist/public"),
     // PREVIEW_BILLING=1 tries billing with a stand-in for Stripe.
     billing: process.env.PREVIEW_BILLING === "1" ? previewBilling : null,
+    // The preview admin is staff, so the staff console can be tried.
+    staffEmails: [viewerUser.email],
   },
 );
 // End the free week now (the first bill), or bill as on the 1st (?month=1).

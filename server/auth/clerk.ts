@@ -76,3 +76,9 @@ export function clerkRoleSync(db: Db): RoleChangeListener {
     }
   };
 }
+
+/** Remove a deleted organization from Clerk, so its people can't sign in to it. */
+export async function deleteClerkOrganization({ clerkOrgId }: { clerkOrgId: string | null }) {
+  if (!clerkOrgId) return;
+  await clerkClient.organizations.deleteOrganization(clerkOrgId);
+}

@@ -771,3 +771,24 @@ export const invoices = pgTable(
     index("invoices_stripe_idx").on(t.stripeInvoiceId),
   ],
 );
+
+// ----------------------------------------------------------------- staff
+
+/**
+ * What Bagger staff did in the staff console, such as deleting an
+ * organization's data. Deliberately not tied to an organization, so the record
+ * outlives the organization it describes.
+ */
+export const staffActions = pgTable(
+  "staff_actions",
+  {
+    id: id(),
+    staffEmail: text("staff_email").notNull(),
+    action: text("action").notNull(),
+    orgId: uuid("org_id"),
+    orgName: text("org_name"),
+    data: jsonb("data").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("staff_actions_created_idx").on(t.createdAt)],
+);

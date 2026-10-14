@@ -1,4 +1,4 @@
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import { AppLayout } from "./components/AppLayout";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
@@ -19,6 +19,7 @@ import { ReportBuilderPage } from "./pages/ReportBuilder";
 import { ReportsPage } from "./pages/Reports";
 import { SequenceDetailPage } from "./pages/SequenceDetail";
 import { SequencesPage } from "./pages/Sequences";
+import { StaffOrgPage, StaffPage } from "./pages/Staff";
 import { AdminPage, browserTimeZone, SettingsPage } from "./pages/Settings";
 import { TemplateDetailPage, TemplatesPage } from "./pages/Templates";
 
@@ -57,6 +58,9 @@ function useFirstVisitTimeZone(ready: boolean) {
 
 export function App() {
   const me = useMe();
+  const [location] = useLocation();
+  // The staff console opens whatever state the staff member's own organization is in.
+  const staffPage = me.data?.isStaff && (location === "/staff" || location.startsWith("/staff/"));
   useFirstVisitTimeZone(me.data?.billingStatus === "active");
 
   let page;
@@ -64,6 +68,13 @@ export function App() {
     page = <Notice title="Loading…">Getting your account.</Notice>;
   } else if (me.error) {
     page = <Notice title="Couldn't load your account">{me.error.message}</Notice>;
+  } else if (staffPage) {
+    page = (
+      <Switch>
+        <Route path="/staff" component={StaffPage} />
+        <Route path="/staff/:id" component={StaffOrgPage} />
+      </Switch>
+    );
   } else if (me.data?.billingStatus !== "active") {
     page = <AccountGate me={me.data!} />;
   } else {

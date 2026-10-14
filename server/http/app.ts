@@ -32,6 +32,7 @@ import { globalSearch } from "../search/service";
 import * as exportService from "../export/service";
 import * as people from "../people/service";
 import * as billing from "../billing/service";
+import * as staffService from "../staff/service";
 import type { BillingGateway } from "../billing/gateway";
 import { verifyClerkWebhook, type ClerkEvent } from "../people/clerk-webhook";
 import * as dashboard from "../dashboard/service";
@@ -147,6 +148,10 @@ export interface AppOptions {
   clerkWebhookSecret?: string;
   /** Payments. Without it billing is switched off and nobody is asked for a card. */
   billing?: BillingGateway | null;
+  /** Lowercased email addresses of Bagger staff, who can open the staff console. */
+  staffEmails?: string[];
+  /** Called after staff delete an organization, to remove it from sign-in too. */
+  onOrgDeleted?: (org: { clerkOrgId: string | null }) => Promise<void>;
 }
 
 export function createApp(db: Db, authenticate: Authenticator, options: AppOptions = {}) {
@@ -254,7 +259,51 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       permissions: actor.permissions,
       billingStatus: effectiveStatus(actor),
       isOwner: actor.isOwner,
+      isStaff: Boolean(await staffService.staffFor(db, actor, options.staffEmails ?? [])),
     });
+  });
+
+  // ---- staff console: Bagger staff only, whatever state their own organization is in.
+  // Anyone else gets "not found", so the console isn't advertised.
+  const staffOf = async (req: Request) => {
+    const staff = await staffService.staffFor(db, actorOf(req), options.staffEmails ?? []);
+    if (!staff) throw new NotFoundError();
+    return staff;
+  };
+  api.get("/staff/organizations", async (req, res) => {
+    await staffOf(req);
+    res.json(await staffService.listOrganizations(db));
+  });
+  api.get("/staff/organizations/:id", async (req, res) => {
+    await staffOf(req);
+    res.json(await staffService.getOrganization(db, String(req.params.id)));
+  });
+  api.post("/staff/organizations/:id/owner", async (req, res) => {
+    const staff = await staffOf(req);
+    const done = await staffService.changeOwner(db, staff, String(req.params.id), req.body);
+    // Clerk only lets its own admins manage members, so keep it in step.
+    if (done.madeAdmin && options.onRoleChange) {
+      await options.onRoleChange({ orgId: done.orgId, userId: done.userId, isAdmin: true });
+    }
+    res.json({ owner: done.owner, madeAdmin: done.madeAdmin });
+  });
+  api.post("/staff/organizations/:id/delete", async (req, res) => {
+    const staff = await staffOf(req);
+    const orgId = String(req.params.id);
+    const done = await staffService.deleteOrganization(db, staff, orgId, req.body);
+    let signIn: "removed" | "failed" | "none" = "none";
+    if (done.clerkOrgId && options.onOrgDeleted) {
+      try {
+        await options.onOrgDeleted({ clerkOrgId: done.clerkOrgId });
+        signIn = "removed";
+      } catch (e) {
+        // The data is gone either way; say so, and log it for removing by hand.
+        console.error("Could not delete the Clerk organization", e);
+        await staffService.noteClerkFailure(db, staff, orgId, e instanceof Error ? e.message : "");
+        signIn = "failed";
+      }
+    }
+    res.json({ name: done.name, peopleDeleted: done.peopleDeleted, signIn });
   });
 
   // The full data export stays open on a locked or cancelled account, so a
