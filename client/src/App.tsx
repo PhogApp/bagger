@@ -104,7 +104,7 @@ export function App() {
 }
 
 const GATE_TITLE = {
-  setup: "Add a card to start",
+  setup: "Add a card to start your free week",
   locked: "This account is locked",
   cancelled: "This account is cancelled",
 } as const;
@@ -121,7 +121,7 @@ function AccountGate({ me }: { me: Me }) {
   const text = me.isOwner
     ? {
         setup:
-          "Bagger is $5 per user per month, billed on the 1st. Nothing is charged today: the rest of this month is added to your first bill.",
+          "Your first week is free. Bagger is then $7.99 per user per month: when the trial ends you're charged for the rest of that month, then on the 1st of each month. Cancel during the trial and nothing is charged.",
         locked: "The last charge didn't go through. Pay it below to open the account again.",
         cancelled: "Your data is kept. Reactivate below to pick up where you left off.",
       }[status]

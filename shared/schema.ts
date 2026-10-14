@@ -82,6 +82,13 @@ export const organizations = pgTable("organizations", {
   cardBrand: text("card_brand"),
   cardLast4: text("card_last4"),
   cardExpires: text("card_expires"),
+  /**
+   * The first day that's paid for: the free week runs from the day the first
+   * card is saved up to (not including) this day. Null until there's a card.
+   */
+  trialEndsOn: date("trial_ends_on", { mode: "string" }),
+  /** The day of the first bill (the rest of the month the trial ended in). */
+  firstBilledOn: date("first_billed_on", { mode: "string" }),
   /** The owner asked to cancel: access lasts through this day, then the account is cancelled. */
   cancelsOn: date("cancels_on", { mode: "string" }),
   cancelledAt: timestamp("cancelled_at", { withTimezone: true }),

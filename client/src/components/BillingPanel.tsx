@@ -7,7 +7,7 @@ import { toast } from "@/lib/toast";
 import { cn, formatDate, formatDay } from "@/lib/utils";
 
 /**
- * The owner's billing: the card, what the next bill on the 1st will be, past
+ * The owner's billing: the card, the free week, what the next bill will be, past
  * bills, paying what's owed, and cancelling. Shown on the Organization page
  * and on the screens for an account that's waiting for a card, locked or
  * cancelled.
@@ -22,8 +22,11 @@ interface Billing {
   status: "active" | "locked" | "cancelled";
   card: { brand: string; last4: string; expires: string } | null;
   cancelsOn: string | null;
+  seatCents: number;
+  trialEndsOn: string | null;
+  inTrial: boolean;
   seats: { active: number; ending: number };
-  nextInvoice: { date: string; lines: Line[]; amountCents: number } | null;
+  nextInvoice: { date: string; first: boolean; lines: Line[]; amountCents: number } | null;
   invoices: {
     id: string;
     period: string;
@@ -82,14 +85,18 @@ export function CardReturn() {
     if (params.get("billing") !== "card" || !sessionId || done.current) return;
     done.current = true;
     window.history.replaceState(null, "", window.location.pathname);
-    api<{ card: { last4: string }; unlocked: boolean }>("POST", "/api/billing/card/confirm", {
-      sessionId,
-    })
+    api<{ card: { last4: string }; unlocked: boolean; trialEndsOn: string }>(
+      "POST",
+      "/api/billing/card/confirm",
+      {
+        sessionId,
+      },
+    )
       .then(async (r) => {
         toast.success(
           r.unlocked
             ? `Card ending ${r.card.last4} saved and paid. Your account is open again.`
-            : `Card ending ${r.card.last4} saved`,
+            : `Card ending ${r.card.last4} saved. Your free week has started.`,
         );
         await queryClient.invalidateQueries();
       })
@@ -110,6 +117,16 @@ const STATUS_TEXT: Record<string, string> = {
   open: "Processing",
   void: "Void",
 };
+
+/** "6 days left", "last free day today". */
+function trialLeft(endsOn: string): string {
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const [y, m, d] = endsOn.split("-").map(Number);
+  const days = Math.round((Date.UTC(y, m - 1, d) - today) / 86_400_000);
+  if (days <= 1) return "last free day today";
+  return `${days} days left`;
+}
 
 export function BillingPanel() {
   const api = useApi();
@@ -141,6 +158,7 @@ export function BillingPanel() {
       </p>
     );
   }
+  const seatPrice = money(b.seatCents);
   const owing = b.invoices.filter((i) => i.status === "failed");
   const owed = owing.reduce((sum, i) => sum + i.amountCents, 0);
 
@@ -186,6 +204,19 @@ export function BillingPanel() {
         </div>
       )}
 
+      {b.inTrial && b.trialEndsOn && !b.cancelsOn && (
+        <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+          <p className="font-medium">
+            Free trial: {trialLeft(b.trialEndsOn)}. Nothing is charged until{" "}
+            {formatDay(b.trialEndsOn)}.
+          </p>
+          <p className="mt-1">
+            On {formatDay(b.trialEndsOn)} you're charged for the rest of that month, by the day,
+            then {seatPrice} per user on the 1st of each month.
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <CreditCard className="h-5 w-5 text-muted-foreground" aria-hidden />
@@ -213,11 +244,15 @@ export function BillingPanel() {
       <div className="rounded-md border">
         <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-3 py-2">
           <h3 className="text-sm font-medium">
-            {b.nextInvoice ? `Next bill, ${formatDay(b.nextInvoice.date)}` : "No more bills"}
+            {b.nextInvoice
+              ? `${b.nextInvoice.first ? "First bill" : "Next bill"}, ${formatDay(b.nextInvoice.date)}`
+              : b.card || b.status === "cancelled" || b.cancelsOn
+                ? "No more bills"
+                : "No bills yet"}
           </h3>
           <span className="text-sm text-muted-foreground">
-            {b.seats.active + b.seats.ending} paid seat
-            {b.seats.active + b.seats.ending === 1 ? "" : "s"} at $5 a month
+            {b.seats.active + b.seats.ending} seat
+            {b.seats.active + b.seats.ending === 1 ? "" : "s"} at {seatPrice} a month
           </span>
         </div>
         {b.nextInvoice ? (
@@ -237,7 +272,9 @@ export function BillingPanel() {
           <p className="px-3 py-2 text-sm text-muted-foreground">
             {b.status === "cancelled"
               ? "The account is cancelled."
-              : `The account closes after ${b.cancelsOn ? formatDay(b.cancelsOn) : "this month"}.`}
+              : b.cancelsOn
+                ? `The account closes after ${formatDay(b.cancelsOn)}.`
+                : "Add a card to start your free week."}
           </p>
         )}
       </div>
@@ -245,9 +282,7 @@ export function BillingPanel() {
       <div>
         <h3 className="mb-1 text-sm font-medium">Past bills</h3>
         {b.invoices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            None yet. The first one comes on the 1st of next month.
-          </p>
+          <p className="text-sm text-muted-foreground">None yet.</p>
         ) : (
           <ul className="divide-y rounded-md border text-sm">
             {b.invoices.map((i) => (
@@ -331,8 +366,8 @@ export function BillingPanel() {
           ) : b.cancelsOn ? (
             <div className="flex flex-wrap items-center gap-3">
               <span>
-                Cancelling: the account stays open through {formatDay(b.cancelsOn)}, then closes. No
-                more bills.
+                Cancelling: the account stays open through {formatDay(b.cancelsOn)}, then closes.{" "}
+                {b.inTrial ? "Nothing will be charged." : "No more bills."}
               </span>
               <Button
                 size="sm"
@@ -351,8 +386,10 @@ export function BillingPanel() {
           ) : b.status === "active" && confirmingCancel ? (
             <div className="flex flex-wrap items-center gap-3">
               <span>
-                Everyone keeps access to the end of this month, already paid for. There are no more
-                bills after that, and your data is kept. You can reactivate any time.
+                {b.inTrial
+                  ? "Everyone keeps access to the end of the free week, and nothing is charged."
+                  : "Everyone keeps access to the end of this month, already paid for. There are no more bills after that."}{" "}
+                Your data is kept. You can reactivate any time.
               </span>
               <Button
                 size="sm"

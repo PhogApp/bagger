@@ -3,7 +3,13 @@ import request from "supertest";
 import { beforeAll, describe, expect, it } from "vitest";
 import { resolveActor } from "../server/auth/actor";
 import { FakeGateway } from "../server/billing/gateway";
-import { linesFor, proratedCents, runBillingCycle, SEAT_CENTS } from "../server/billing/service";
+import {
+  addDays,
+  linesFor,
+  proratedCents,
+  runBillingCycle,
+  SEAT_CENTS,
+} from "../server/billing/service";
 import type { Ctx, Db } from "../server/db/types";
 import { createApp } from "../server/http/app";
 import { localDate } from "../server/sequences/dates";
@@ -42,11 +48,11 @@ async function payingOrg(): Promise<Ctx> {
   await as(owner).post("/api/billing/card/confirm", { sessionId });
   return owner;
 }
-/** Pretend it started before this month, so this month gets a bill. */
+/** Pretend its trial and first bill were long ago, so this month gets a bill on the 1st. */
 async function startedLastMonth(owner: Ctx) {
   await db
     .update(s.organizations)
-    .set({ createdAt: new Date(`${lastFirst}T18:00:00Z`) })
+    .set({ trialEndsOn: "2019-12-25", firstBilledOn: "2019-12-25" })
     .where(eq(s.organizations.id, owner.orgId));
   await db
     .update(s.memberships)
@@ -71,10 +77,11 @@ beforeAll(async () => {
 
 describe("what a seat costs", () => {
   it("prorates by day, counting the day added", () => {
-    expect(proratedCents("2026-09-20", "2026-09-01")).toBe(183); // 11 of 30 days: $1.83
+    expect(SEAT_CENTS).toBe(799);
+    expect(proratedCents("2026-09-20", "2026-09-01")).toBe(293); // 11 of 30 days: $2.93
     expect(proratedCents("2026-09-01", "2026-09-01")).toBe(SEAT_CENTS);
-    expect(proratedCents("2026-10-31", "2026-10-01")).toBe(16); // 1 of 31 days
-    expect(proratedCents("2028-02-15", "2028-02-01")).toBe(259); // 15 of 29 days
+    expect(proratedCents("2026-10-31", "2026-10-01")).toBe(26); // 1 of 31 days
+    expect(proratedCents("2028-02-15", "2028-02-01")).toBe(413); // 15 of 29 days
   });
 });
 
@@ -104,8 +111,10 @@ describe("getting a card on file", () => {
     expect((await as(admin).get("/api/leads")).status).toBe(200);
     const billing = (await as(owner).get("/api/billing")).body;
     expect(billing).toMatchObject({ enabled: true, status: "active", card: { last4: "4242" } });
-    // Nothing is charged the day you sign up: the first bill is the 1st of next month.
-    expect(billing.nextInvoice.date).toBe(shiftMonth(thisFirst, 1));
+    // The card starts a free week; the first bill is the day after it.
+    expect(done.body.trialEndsOn).toBe(addDays(today, 7));
+    expect(billing).toMatchObject({ inTrial: true, trialEndsOn: addDays(today, 7) });
+    expect(billing.nextInvoice).toMatchObject({ date: addDays(today, 7), first: true });
     expect(billing.invoices).toEqual([]);
   });
 });
@@ -161,10 +170,75 @@ describe("the bill on the 1st", () => {
     expect(eve.status).toBe("removed");
   });
 
-  it("leaves organizations alone in their first month", async () => {
+  it("doesn't charge again for seats the first bill covered", async () => {
+    const owner = await payingOrg();
+    await startedLastMonth(owner);
+    await db
+      .update(s.organizations)
+      .set({ trialEndsOn: lastMonthDay(10), firstBilledOn: lastMonthDay(10) })
+      .where(eq(s.organizations.id, owner.orgId));
+    const trialist = await addMember(db, owner.orgId, "rep", "Tia Trial");
+    const later = await addMember(db, owner.orgId, "rep", "Lars Later");
+    const seat = (who: Ctx, day: string) =>
+      db
+        .update(s.memberships)
+        .set({ seatStartedOn: day })
+        .where(eq(s.memberships.userId, who.userId));
+    await seat(trialist, lastMonthDay(5)); // joined during the trial: in the first bill
+    await seat(later, lastMonthDay(15)); // joined after it: its days are charged now
+    const lines = await linesFor(db, owner.orgId, thisFirst);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ amountCents: 3 * SEAT_CENTS, seats: 3 });
+    expect(lines[1].description).toContain("Lars Later");
+  });
+});
+
+describe("the free week", () => {
+  it("charges nothing during it", async () => {
     const owner = await payingOrg();
     await runBillingCycle(db, gateway);
     expect(await invoicesOf(owner.orgId)).toHaveLength(0);
+  });
+
+  it("charges the rest of the month, by the day, when it ends; then the 1st", async () => {
+    const owner = await payingOrg();
+    await addMember(db, owner.orgId, "rep", "Ray Rep"); // added during the trial
+    await db
+      .update(s.organizations)
+      .set({ trialEndsOn: today })
+      .where(eq(s.organizations.id, owner.orgId));
+    await runBillingCycle(db, gateway);
+    await runBillingCycle(db, gateway); // once only
+    const bills = await invoicesOf(owner.orgId);
+    expect(bills).toHaveLength(1);
+    expect(bills[0]).toMatchObject({
+      period: thisFirst.slice(0, 7),
+      status: "paid",
+      amountCents: 2 * proratedCents(today, thisFirst),
+    });
+    const billing = (await as(owner).get("/api/billing")).body;
+    expect(billing.inTrial).toBe(false);
+    // Then the full month on the next 1st, with nothing prorated again.
+    expect(billing.nextInvoice).toMatchObject({
+      date: shiftMonth(thisFirst, 1),
+      first: false,
+      amountCents: 2 * SEAT_CENTS,
+    });
+  });
+
+  it("can be cancelled with nothing charged", async () => {
+    const owner = await payingOrg();
+    const res = await as(owner).post("/api/billing/cancel");
+    expect(res.body.cancelsOn).toBe(addDays(today, 6));
+    expect((await as(owner).get("/api/billing")).body.nextInvoice).toBeNull();
+    // The trial runs out: the account closes instead of being billed.
+    await db
+      .update(s.organizations)
+      .set({ trialEndsOn: today, cancelsOn: addDays(today, -1) })
+      .where(eq(s.organizations.id, owner.orgId));
+    await runBillingCycle(db, gateway);
+    expect(await invoicesOf(owner.orgId)).toHaveLength(0);
+    expect((await as(owner).get("/api/me")).body.billingStatus).toBe("cancelled");
   });
 });
 
@@ -226,6 +300,7 @@ describe("a declined card", () => {
 describe("cancelling", () => {
   it("lasts to the end of the month, can be undone, then stops the bills; reactivating starts again", async () => {
     const owner = await payingOrg();
+    await startedLastMonth(owner);
     const res = await as(owner).post("/api/billing/cancel");
     expect(res.body.cancelsOn).toBe(lastDayOf(thisFirst));
     expect((await as(owner).get("/api/billing")).body).toMatchObject({
@@ -236,7 +311,6 @@ describe("cancelling", () => {
     expect((await as(owner).get("/api/billing")).body.cancelsOn).toBeNull();
 
     await as(owner).post("/api/billing/cancel");
-    await startedLastMonth(owner);
     await db
       .update(s.organizations)
       .set({ cancelsOn: "2020-01-31" })

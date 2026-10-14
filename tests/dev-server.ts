@@ -8,6 +8,7 @@
  * which is why this file lives under tests/ and is never part of the build
  * that Render runs. The production server ignores those headers.
  */
+import { sql } from "drizzle-orm";
 import path from "node:path";
 import { resolveActor } from "../server/auth/actor";
 import { createApp } from "../server/http/app";
@@ -163,11 +164,21 @@ const app = createApp(
     billing: process.env.PREVIEW_BILLING === "1" ? previewBilling : null,
   },
 );
-// Bill now, as on the 1st, by pretending the organization started last month.
+// End the free week now (the first bill), or bill as on the 1st (?month=1).
 if (process.env.PREVIEW_BILLING === "1") {
-  app.post("/preview/bill-now", async (_req, res) => {
-    await db.update(organizations).set({ createdAt: new Date(Date.now() - 40 * 86_400_000) });
-    await db.update(memberships).set({ seatStartedOn: "2020-01-01" });
+  app.post("/preview/bill-now", async (req, res) => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (req.query.month === "1") {
+      await db
+        .update(organizations)
+        .set({ trialEndsOn: "2019-12-25", firstBilledOn: "2019-12-25" });
+      await db.update(memberships).set({ seatStartedOn: "2020-01-01" });
+    } else {
+      await db
+        .update(organizations)
+        .set({ trialEndsOn: today })
+        .where(sql`${organizations.cardLast4} is not null`);
+    }
     res.json(await runBillingCycle(db, previewBilling));
   });
   app.post("/preview/decline", (req, res) => {

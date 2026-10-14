@@ -201,7 +201,7 @@ export function OrganizationPage() {
 
         <Card
           title="Billing"
-          description="$5 per user per month, billed on the 1st. Receipts and payment notices go to you."
+          description="$7.99 per user per month after a free week, billed on the 1st. Receipts and payment notices go to you."
         >
           <div className="max-w-md space-y-1.5">
             <Label htmlFor="billing-email">Additional billing email (optional)</Label>

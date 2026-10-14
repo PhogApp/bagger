@@ -11,12 +11,16 @@ import type { BillingGateway, ChargeResult } from "./gateway";
 /**
  * Billing, as decided in bagger-pricing-and-billing.md: billed like rent.
  *
- * - $5 per user per month, charged on the 1st for the month ahead.
- * - A card is required before the organization can be used.
- * - A seat added during a month is prorated by day (days left, counting the
- *   day added, over days in the month) and charged on the next 1st with that
- *   month's seats. Nothing is charged on the day a seat is added, so a
- *   customer who cancels before their first 1st pays nothing.
+ * - $7.99 per user per month, charged on the 1st for the month ahead.
+ * - A card is required before the organization can be used. Saving the first
+ *   card starts a free week: nothing is charged for those 7 days, and
+ *   cancelling during them costs nothing.
+ * - The day the trial ends, the first bill charges each seat for the rest of
+ *   that month, by the day. From the next 1st it's monthly.
+ * - A seat added after that is prorated by day (days left, counting the day
+ *   added, over days in the month) and charged on the next 1st with that
+ *   month's seats. Nothing is charged on the day a seat is added. Seats added
+ *   during the trial are simply part of the first bill.
  * - A seat removed during a month lasts to the end of it and isn't charged on
  *   the next 1st; a seat added and removed in the same month isn't charged.
  * - A failed charge locks the account at once. The owner can still update the
@@ -27,7 +31,9 @@ import type { BillingGateway, ChargeResult } from "./gateway";
  * the owner.
  */
 
-export const SEAT_CENTS = 500;
+export const SEAT_CENTS = 799;
+export const TRIAL_DAYS = 7;
+const price = `$${(SEAT_CENTS / 100).toFixed(2)}`;
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const daysIn = (year: number, month: number) => new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -37,6 +43,17 @@ function addMonths(first: string, by: number): string {
   const [y, m] = first.split("-").map(Number);
   return ymd(new Date(Date.UTC(y, m - 1 + by, 1)));
 }
+/** "2026-10-14" + 7 → "2026-10-21". */
+export function addDays(day: string, by: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return ymd(new Date(Date.UTC(y, m - 1, d + by)));
+}
+const shortDay = (day: string) =>
+  new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 const monthName = (first: string) =>
   new Date(`${first}T12:00:00Z`).toLocaleDateString("en-US", {
     month: "long",
@@ -52,7 +69,7 @@ export function proratedCents(day: string, first: string): number {
   return Math.round((SEAT_CENTS * left) / total);
 }
 
-async function today(db: Db, orgId: string): Promise<string> {
+export async function today(db: Db, orgId: string): Promise<string> {
   const [row] = await db
     .select({
       today: sql<string>`to_char((now() at time zone coalesce(${orgSettings.timezone}, 'America/Chicago'))::date, 'YYYY-MM-DD')`,
@@ -68,14 +85,8 @@ export interface Line {
   seats?: number;
 }
 
-/**
- * What the bill for the month starting `first` holds: every seat that started
- * before that month and is still there for it, plus the days of the month
- * before for seats that started during it.
- */
-export async function linesFor(db: Db, orgId: string, first: string): Promise<Line[]> {
-  const before = addMonths(first, -1);
-  const seats = await db
+async function seatsOf(db: Db, orgId: string) {
+  return db
     .select({
       name: users.name,
       status: memberships.status,
@@ -85,18 +96,60 @@ export async function linesFor(db: Db, orgId: string, first: string): Promise<Li
     .from(memberships)
     .innerJoin(users, eq(memberships.userId, users.id))
     .where(and(eq(memberships.orgId, orgId), inArray(memberships.status, ["active", "ending"])));
+}
+
+/**
+ * The first bill, on `day` (the day the trial ended): every seat there that
+ * day, for the rest of the month by the day.
+ */
+export async function firstLines(db: Db, orgId: string, day: string): Promise<Line[]> {
+  const first = `${day.slice(0, 7)}-01`;
+  const seats = (await seatsOf(db, orgId)).filter(
+    (s) => s.status === "active" || (s.endsOn ?? "") >= day,
+  );
+  if (seats.length === 0) return [];
+  const n = seats.length;
+  const users = `${n} user${n === 1 ? "" : "s"}`;
+  const [y, m] = first.split("-").map(Number);
+  const days = daysIn(y, m) - Number(day.slice(8, 10)) + 1;
+  return [
+    {
+      description:
+        day === first
+          ? `${users} × ${price}, ${monthName(first)}`
+          : `${users} × ${days} day${days === 1 ? "" : "s"} of ${monthName(first)} (from ${shortDay(day)})`,
+      amountCents: n * proratedCents(day, first),
+      seats: n,
+    },
+  ];
+}
+
+/**
+ * What the bill for the month starting `first` holds: every seat that started
+ * before that month and is still there for it, plus the days of the month
+ * before for seats that started during it (after the first bill, which
+ * covered everyone there at the time).
+ */
+export async function linesFor(db: Db, orgId: string, first: string): Promise<Line[]> {
+  const before = addMonths(first, -1);
+  const org = await loadOrg(db, orgId);
+  const billedFrom = org?.firstBilledOn ?? "";
+  const seats = await seatsOf(db, orgId);
   // A seat ending before this month starts isn't paid for it.
   const staying = seats.filter((s) => s.status === "active" || (s.endsOn ?? "") >= first);
   const full = staying.filter((s) => s.startedOn < first).length;
   const lines: Line[] = [];
   if (full > 0) {
     lines.push({
-      description: `${full} user${full === 1 ? "" : "s"} × $5.00, ${monthName(first)}`,
+      description: `${full} user${full === 1 ? "" : "s"} × ${price}, ${monthName(first)}`,
       amountCents: full * SEAT_CENTS,
       seats: full,
     });
   }
-  for (const s of staying.filter((x) => x.startedOn >= before && x.startedOn < first)) {
+  const added = staying.filter(
+    (x) => x.startedOn >= before && x.startedOn < first && x.startedOn > billedFrom,
+  );
+  for (const s of added) {
     const [y, m] = before.split("-").map(Number);
     const days = daysIn(y, m) - Number(s.startedOn.slice(8, 10)) + 1;
     lines.push({
@@ -127,8 +180,20 @@ export async function getBilling(db: Db, actor: Actor, gateway: BillingGateway |
   await finalizeDue(db, actor.orgId);
   const org = await loadOrg(db, actor.orgId);
   const day = await today(db, actor.orgId);
-  const nextFirst = addMonths(`${day.slice(0, 7)}-01`, 1);
-  const next = await linesFor(db, actor.orgId, nextFirst);
+  // Before the first bill, the next one is the day the trial ends (or today,
+  // if it ended while the account was closed); after it, the next 1st.
+  const nextDate = org.firstBilledOn
+    ? addMonths(`${day.slice(0, 7)}-01`, 1)
+    : org.trialEndsOn
+      ? org.trialEndsOn > day
+        ? org.trialEndsOn
+        : day
+      : null;
+  const next = !nextDate
+    ? []
+    : org.firstBilledOn
+      ? await linesFor(db, actor.orgId, nextDate)
+      : await firstLines(db, actor.orgId, nextDate);
   const history = await db
     .select()
     .from(invoices)
@@ -148,12 +213,16 @@ export async function getBilling(db: Db, actor: Actor, gateway: BillingGateway |
       ? { brand: org.cardBrand, last4: org.cardLast4, expires: org.cardExpires }
       : null,
     cancelsOn: org.cancelsOn,
+    seatCents: SEAT_CENTS,
+    trialEndsOn: org.trialEndsOn,
+    inTrial: Boolean(org.trialEndsOn && !org.firstBilledOn && day < org.trialEndsOn),
     seats: counts,
     nextInvoice:
-      org.billingStatus === "cancelled" || (org.cancelsOn && org.cancelsOn < nextFirst)
+      !nextDate || org.billingStatus === "cancelled" || (org.cancelsOn && org.cancelsOn < nextDate)
         ? null
         : {
-            date: nextFirst,
+            date: nextDate,
+            first: !org.firstBilledOn,
             lines: next,
             amountCents: next.reduce((sum, l) => sum + l.amountCents, 0),
           },
@@ -220,12 +289,14 @@ export async function confirmCardSetup(
   if (!org.stripeCustomerId) throw new ValidationError("Start by adding a card");
   const card = await g.completeCardSetup(org.stripeCustomerId, sessionId);
   if (!card) throw new ValidationError("The card wasn't saved. Try adding it again.");
+  // The first card starts the free week.
+  const trialEndsOn = org.trialEndsOn ?? addDays(await today(db, org.id), TRIAL_DAYS);
   await db
     .update(organizations)
-    .set({ cardBrand: card.brand, cardLast4: card.last4, cardExpires: card.expires })
+    .set({ cardBrand: card.brand, cardLast4: card.last4, cardExpires: card.expires, trialEndsOn })
     .where(eq(organizations.id, org.id));
   const retried = org.billingStatus === "locked" ? await retryUnpaid(db, org.id, g) : null;
-  return { card, unlocked: retried?.unlocked ?? false };
+  return { card, trialEndsOn, unlocked: retried?.unlocked ?? false };
 }
 
 /** Pay unpaid bills again with the current card. Unlocks the account when nothing is left owing. */
@@ -310,8 +381,65 @@ async function chargeInvoice(
 }
 
 /**
- * The monthly run. Safe to call as often as you like: each organization gets
- * one bill per month. Runs hourly on the server, so the 1st is never missed.
+ * Make this month's bill for one organization, if it's due and not made yet,
+ * and charge it. Before the first bill that means waiting for the trial to
+ * end; the first bill is the rest of that month; after it, the 1st.
+ */
+async function billOrg(
+  db: Db,
+  orgId: string,
+  gateway: BillingGateway,
+  day: string,
+): Promise<"paid" | "failed" | "open" | null> {
+  const org = await loadOrg(db, orgId);
+  // Bills go to working accounts with a card.
+  if (org.billingStatus !== "active" || !org.cardLast4 || !org.stripeCustomerId) return null;
+  const firstBill = !org.firstBilledOn;
+  if (firstBill && (!org.trialEndsOn || day < org.trialEndsOn)) return null; // still free
+  const first = `${day.slice(0, 7)}-01`;
+
+  await finalizeDue(db, orgId);
+  const lines = firstBill ? await firstLines(db, orgId, day) : await linesFor(db, orgId, first);
+  const amountCents = lines.reduce((sum, l) => sum + l.amountCents, 0);
+  const inv = await db.transaction(async (tx) => {
+    const [made] = await tx
+      .insert(invoices)
+      .values({ orgId, period: first.slice(0, 7), amountCents, lines })
+      .onConflictDoNothing()
+      .returning();
+    if (made && firstBill) {
+      await tx.update(organizations).set({ firstBilledOn: day }).where(eq(organizations.id, orgId));
+    }
+    return made;
+  });
+  if (!inv) return null; // already billed this month
+  if (amountCents === 0) {
+    await db
+      .update(invoices)
+      .set({ status: "paid", paidAt: new Date() })
+      .where(eq(invoices.id, inv.id));
+    return null;
+  }
+  let outcome: "paid" | "failed" | "open" = "open";
+  try {
+    const result = await chargeInvoice(db, orgId, inv, gateway);
+    await record(db, inv.id, result);
+    outcome = result.status;
+  } catch (e) {
+    // Stripe couldn't be reached; the bill stays open and is tried again next hour.
+    await db
+      .update(invoices)
+      .set({ failureMessage: e instanceof Error ? e.message : "Payment service unavailable" })
+      .where(eq(invoices.id, inv.id));
+  }
+  await settleStatus(db, orgId);
+  return outcome;
+}
+
+/**
+ * The billing run. Safe to call as often as you like: each organization gets
+ * one bill per month. Runs hourly on the server, so neither the 1st nor the
+ * end of a trial is missed.
  */
 export async function runBillingCycle(
   db: Db,
@@ -332,47 +460,9 @@ export async function runBillingCycle(
       cancelled += 1;
       continue;
     }
-    // Bills go to working accounts with a card, from the first month after they started.
-    if (org.billingStatus !== "active" || !org.cardLast4 || !org.stripeCustomerId) continue;
-    const first = `${day.slice(0, 7)}-01`;
-    const [started] = await db
-      .select({
-        day: sql<string>`to_char((${organizations.createdAt} at time zone coalesce(${orgSettings.timezone}, 'America/Chicago'))::date, 'YYYY-MM-DD')`,
-      })
-      .from(organizations)
-      .leftJoin(orgSettings, eq(orgSettings.orgId, organizations.id))
-      .where(eq(organizations.id, org.id));
-    if ((started?.day ?? first) >= first) continue;
-
-    await finalizeDue(db, org.id);
-    const lines = await linesFor(db, org.id, first);
-    const amountCents = lines.reduce((sum, l) => sum + l.amountCents, 0);
-    const [inv] = await db
-      .insert(invoices)
-      .values({ orgId: org.id, period: first.slice(0, 7), amountCents, lines })
-      .onConflictDoNothing()
-      .returning();
-    if (!inv) continue; // already billed this month
-    if (amountCents === 0) {
-      await db
-        .update(invoices)
-        .set({ status: "paid", paidAt: new Date() })
-        .where(eq(invoices.id, inv.id));
-      continue;
-    }
-    try {
-      const result = await chargeInvoice(db, org.id, inv, gateway);
-      await record(db, inv.id, result);
-      if (result.status === "paid") billed += 1;
-      else failed += 1;
-    } catch (e) {
-      // Stripe couldn't be reached; the bill stays open and is tried again next hour.
-      await db
-        .update(invoices)
-        .set({ failureMessage: e instanceof Error ? e.message : "Payment service unavailable" })
-        .where(eq(invoices.id, inv.id));
-    }
-    await settleStatus(db, org.id);
+    const outcome = await billOrg(db, org.id, gateway, day);
+    if (outcome === "paid") billed += 1;
+    if (outcome === "failed") failed += 1;
   }
   // Bills Stripe never received are tried again; the key stops a double charge.
   const stuck = await db
@@ -429,7 +519,12 @@ export async function cancelAccount(db: Db, actor: Actor) {
     throw new ValidationError("Only a working account can be cancelled");
   const day = await today(db, actor.orgId);
   const [y, m] = day.split("-").map(Number);
-  const lastDay = `${day.slice(0, 8)}${String(daysIn(y, m)).padStart(2, "0")}`;
+  // During the free week, it ends with the trial and nothing is charged;
+  // otherwise it lasts to the end of the month already paid for.
+  const lastDay =
+    !org.firstBilledOn && org.trialEndsOn && day < org.trialEndsOn
+      ? addDays(org.trialEndsOn, -1)
+      : `${day.slice(0, 8)}${String(daysIn(y, m)).padStart(2, "0")}`;
   await db.update(organizations).set({ cancelsOn: lastDay }).where(eq(organizations.id, org.id));
   return { cancelsOn: lastDay };
 }
@@ -443,8 +538,9 @@ export async function undoCancel(db: Db, actor: Actor) {
 }
 
 /**
- * Come back after cancelling. Billing starts again from today: the rest of
- * this month is prorated on the next 1st, like a new customer.
+ * Come back after cancelling. After paying before: billing starts again from
+ * today, the rest of this month prorated on the next 1st. Cancelled during
+ * the trial: the first bill (the rest of this month) comes with the next run.
  */
 export async function reactivate(db: Db, actor: Actor) {
   requireOwner(actor);
