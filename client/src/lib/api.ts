@@ -86,6 +86,8 @@ export interface Me {
   billingStatus: "active" | "locked" | "cancelled" | "setup";
   /** True for the one person who owns the organization. */
   isOwner: boolean;
+  /** Bagger staff, who can open the staff console. */
+  isStaff?: boolean;
 }
 
 export interface OrgUser {

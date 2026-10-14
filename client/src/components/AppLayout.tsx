@@ -6,6 +6,7 @@ import {
   FileText,
   Landmark,
   LayoutDashboard,
+  LifeBuoy,
   ListOrdered,
   ShieldCheck,
   UserPlus,
@@ -99,6 +100,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
 
           <div className="space-y-0.5 border-t border-white/15 pt-3">
+            {me?.isStaff && (
+              <Link href="/staff" className={itemClass(at("/staff"))}>
+                <LifeBuoy className="h-4 w-4" aria-hidden />
+                Staff
+              </Link>
+            )}
             {me?.isOwner && (
               <Link href="/organization" className={itemClass(at("/organization"))}>
                 <Landmark className="h-4 w-4" aria-hidden />

@@ -44,3 +44,6 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      # Bagger staff who can open the staff console, comma-separated emails.
+      - key: STAFF_EMAILS
+        sync: false

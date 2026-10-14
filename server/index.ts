@@ -1,10 +1,16 @@
 import path from "node:path";
-import { clerkAuthenticator, clerkRoleSync, clerkSession } from "./auth/clerk";
+import {
+  clerkAuthenticator,
+  clerkRoleSync,
+  clerkSession,
+  deleteClerkOrganization,
+} from "./auth/clerk";
 import { connect } from "./db/client";
 import { createApp } from "./http/app";
 import { finalizeAllDue } from "./people/service";
 import { StripeGateway } from "./billing/gateway";
 import { runBillingCycle } from "./billing/service";
+import { parseStaffEmails } from "./staff/service";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -38,6 +44,9 @@ const app = createApp(db, clerkAuthenticator(db), {
   // Optional until the webhook is set up in Clerk; removals made in Admin work without it.
   clerkWebhookSecret: process.env.CLERK_WEBHOOK_SECRET || undefined,
   billing: billingGateway,
+  // Bagger staff, by email, who can open the staff console. Set in Render only.
+  staffEmails: parseStaffEmails(process.env.STAFF_EMAILS),
+  onOrgDeleted: deleteClerkOrganization,
 });
 
 // Seats end on their last day even if nobody from that organization signs in.
