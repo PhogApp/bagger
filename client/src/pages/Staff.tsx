@@ -47,6 +47,7 @@ interface StaffAction {
   createdAt: string;
 }
 interface Overview {
+  billingOn: boolean;
   totals: {
     organizations: number;
     trial: number;
@@ -242,6 +243,13 @@ export function StaffPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Staff console</h1>
       </Header>
       <div className="space-y-6 p-6">
+        {!overview.data!.billingOn && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Payments aren't switched on for this server (no Stripe key), so no organization has a
+            card and revenue shows as nothing. "No card" doesn't mean a customer gave up here, so
+            only cancelled organizations can be deleted.
+          </p>
+        )}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <Tile
             label="Monthly revenue"

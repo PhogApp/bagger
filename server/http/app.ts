@@ -272,11 +272,11 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   };
   api.get("/staff/organizations", async (req, res) => {
     await staffOf(req);
-    res.json(await staffService.listOrganizations(db));
+    res.json(await staffService.listOrganizations(db, Boolean(options.billing)));
   });
   api.get("/staff/organizations/:id", async (req, res) => {
     await staffOf(req);
-    res.json(await staffService.getOrganization(db, String(req.params.id)));
+    res.json(await staffService.getOrganization(db, String(req.params.id), Boolean(options.billing)));
   });
   api.post("/staff/organizations/:id/owner", async (req, res) => {
     const staff = await staffOf(req);
@@ -290,7 +290,13 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.post("/staff/organizations/:id/delete", async (req, res) => {
     const staff = await staffOf(req);
     const orgId = String(req.params.id);
-    const done = await staffService.deleteOrganization(db, staff, orgId, req.body);
+    const done = await staffService.deleteOrganization(
+      db,
+      staff,
+      orgId,
+      req.body,
+      Boolean(options.billing),
+    );
     let signIn: "removed" | "failed" | "none" = "none";
     if (done.clerkOrgId && options.onOrgDeleted) {
       try {
