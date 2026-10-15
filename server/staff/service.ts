@@ -74,8 +74,9 @@ function statusOf(org: OrgRow, today: string): StaffStatus {
  * Data can go once the customer has left: a cancelled account, or a sign-up
  * that never saved a card and was never billed.
  */
-function deletable(status: StaffStatus, bills: number): boolean {
-  return status === "cancelled" || (status === "no_card" && bills === 0);
+function deletable(status: StaffStatus, bills: number, billingOn: boolean): boolean {
+  // With payments off nobody has a card, so "no card" says nothing about leaving.
+  return status === "cancelled" || (billingOn && status === "no_card" && bills === 0);
 }
 
 const today = sql<string>`to_char((now() at time zone coalesce(${orgSettings.timezone}, 'America/Chicago'))::date, 'YYYY-MM-DD')`;
@@ -107,6 +108,7 @@ async function rows(db: Db, orgId?: string) {
 function summarize(
   r: Awaited<ReturnType<typeof rows>>[number],
   bills: (typeof invoices.$inferSelect)[],
+  billingOn: boolean,
 ) {
   const { org } = r;
   const status = statusOf(org, r.today);
@@ -132,17 +134,17 @@ function summarize(
     owedCents: bills.filter((b) => b.status === "failed").reduce((s, b) => s + b.amountCents, 0),
     paidCents: paid.reduce((s, b) => s + b.amountCents, 0),
     lastActive: r.lastActive ? new Date(r.lastActive) : null,
-    canDelete: deletable(status, bills.length),
+    canDelete: deletable(status, bills.length, billingOn),
   };
 }
 
 /** Every organization, newest first, with the figures that matter across them. */
-export async function listOrganizations(db: Db) {
+export async function listOrganizations(db: Db, billingOn: boolean) {
   const all = await rows(db);
   const bills = await db.select().from(invoices).orderBy(desc(invoices.period));
   const byOrg = new Map<string, (typeof invoices.$inferSelect)[]>();
   for (const b of bills) byOrg.set(b.orgId, [...(byOrg.get(b.orgId) ?? []), b]);
-  const orgs = all.map((r) => summarize(r, byOrg.get(r.org.id) ?? []));
+  const orgs = all.map((r) => summarize(r, byOrg.get(r.org.id) ?? [], billingOn));
   const count = (s: StaffStatus) => orgs.filter((o) => o.status === s).length;
   const paying = orgs.filter((o) => o.status === "paying" || o.status === "cancelling");
   const recent = await db
@@ -151,6 +153,7 @@ export async function listOrganizations(db: Db) {
     .orderBy(desc(staffActions.createdAt))
     .limit(20);
   return {
+    billingOn,
     totals: {
       organizations: orgs.length,
       trial: count("trial"),
@@ -174,7 +177,7 @@ export async function listOrganizations(db: Db) {
 const orgIdParam = z.uuid();
 
 /** One organization: its people, its bills, how much it holds, and what staff did to it. */
-export async function getOrganization(db: Db, rawId: string) {
+export async function getOrganization(db: Db, rawId: string, billingOn: boolean) {
   const parsed = orgIdParam.safeParse(rawId);
   if (!parsed.success) throw new NotFoundError();
   const orgId = parsed.data;
@@ -228,7 +231,7 @@ export async function getOrganization(db: Db, rawId: string) {
     .where(eq(staffActions.orgId, orgId))
     .orderBy(desc(staffActions.createdAt));
   return {
-    ...summarize(r, bills),
+    ...summarize(r, bills, billingOn),
     timezone: r.timezone ?? "America/Chicago",
     billingEmail: r.org.billingEmail,
     stripeCustomerId: r.org.stripeCustomerId,
@@ -268,7 +271,13 @@ const deleteBody = z.object({ confirmName: z.string().max(300) });
  *
  * Returns the Clerk organization so the caller can remove it from sign-in too.
  */
-export async function deleteOrganization(db: Db, staff: Staff, rawId: string, raw: unknown) {
+export async function deleteOrganization(
+  db: Db,
+  staff: Staff,
+  rawId: string,
+  raw: unknown,
+  billingOn: boolean,
+) {
   const parsed = orgIdParam.safeParse(rawId);
   if (!parsed.success) throw new NotFoundError();
   const orgId = parsed.data;
@@ -280,7 +289,7 @@ export async function deleteOrganization(db: Db, staff: Staff, rawId: string, ra
     .from(invoices)
     .where(eq(invoices.orgId, orgId));
   const status = statusOf(r.org, r.today);
-  if (!deletable(status, bills)) {
+  if (!deletable(status, bills, billingOn)) {
     throw new ValidationError(
       "Only a cancelled organization, or one that never added a card, can be deleted",
     );

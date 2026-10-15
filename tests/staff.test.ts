@@ -327,3 +327,33 @@ describe("changing the owner", () => {
     });
   });
 });
+
+describe("with payments switched off", () => {
+  it("doesn't treat having no card as having left", async () => {
+    const offApp = createApp(
+      db,
+      async (req) => {
+        const userId = req.header("x-user");
+        const orgId = req.header("x-org");
+        return userId && orgId ? resolveActor(db, { userId, orgId }) : null;
+      },
+      { staffEmails: ["staff@bagger.test"] },
+    );
+    const org = await createOrg(db, { name: "Free Ride Co" });
+    const get = (url: string) =>
+      request(offApp).get(url).set("x-user", staff.userId).set("x-org", staff.orgId);
+    const list = (await get("/api/staff/organizations")).body;
+    expect(list.billingOn).toBe(false);
+    expect((await get(`/api/staff/organizations/${org.orgId}`)).body).toMatchObject({
+      status: "no_card",
+      canDelete: false,
+    });
+    const res = await request(offApp)
+      .post(`/api/staff/organizations/${org.orgId}/delete`)
+      .set("x-user", staff.userId)
+      .set("x-org", staff.orgId)
+      .send({ confirmName: "Free Ride Co" });
+    expect(res.status).toBe(400);
+    expect(await orgRow(org.orgId)).toBeDefined();
+  });
+});
