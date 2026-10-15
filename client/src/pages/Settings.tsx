@@ -303,7 +303,7 @@ export function AdminPage() {
         <StatusSettings canEdit={canUse(me, "setup.org_settings")} />
         {canUse(me, "setup.org_settings") && <FieldSettings />}
         <PeopleSettings canManage={canUse(me, "account.users_and_roles")} />
-        {canUse(me, "setup.integrations") && (
+        {canUse(me, "setup.integrations") && me.features?.integrations && (
           <Section
             title="Integrations"
             description="Connect HubSpot, Salesforce, ZoomInfo, Gmail and Outlook, and choose what each one syncs."

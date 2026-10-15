@@ -264,6 +264,12 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       billingStatus: effectiveStatus(actor),
       isOwner: actor.isOwner,
       isStaff: Boolean(await staffService.staffFor(db, actor, options.staffEmails ?? [])),
+      // Admin › Integrations appears once there's a real service to connect.
+      features: {
+        integrations: Boolean(
+          options.integrations?.key && Object.keys(options.integrations.providers).length > 0,
+        ),
+      },
     });
   });
 

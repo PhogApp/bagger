@@ -88,6 +88,8 @@ export interface Me {
   isOwner: boolean;
   /** Bagger staff, who can open the staff console. */
   isStaff?: boolean;
+  /** Parts of Bagger switched on for this server. */
+  features?: { integrations?: boolean };
 }
 
 export interface OrgUser {
