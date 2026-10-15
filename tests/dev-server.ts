@@ -24,6 +24,10 @@ import { localDate } from "../server/sequences/dates";
 import * as seq from "../server/sequences/service";
 import { addMember, createOrg, createTestDb } from "./helpers";
 import { FakeGateway } from "../server/billing/gateway";
+import { IntegrationKey } from "../server/integrations/crypto";
+import { DemoCrm } from "../server/integrations/demo-crm";
+import { integrationJobs } from "../server/integrations/jobs";
+import { runDueJobs } from "../server/jobs/queue";
 import { invoices, memberships, organizations, users } from "../shared/schema";
 import { runBillingCycle } from "../server/billing/service";
 
@@ -203,6 +207,32 @@ for (const [name, people, state, billCents] of samples) {
 }
 const [viewerUser] = await db.select().from(users).where(eq(users.id, adminCtx.userId));
 
+// A stand-in CRM to try Admin › Integrations with, holding a few records.
+const demoCrm = new DemoCrm();
+const demoCo = demoCrm.put("companies", { name: "Phog, Inc.", domain: "phog.example" });
+demoCrm.put("contacts", {
+  firstname: "Dan",
+  lastname: "Smith",
+  email: "dan@phog.example",
+  jobtitle: "Chief Executive Officer",
+  companyId: demoCo.id,
+});
+const demoNew = demoCrm.put("companies", {
+  name: "Lakeshore Logistics",
+  domain: "lakeshore.example",
+});
+demoCrm.put("contacts", {
+  firstname: "Lena",
+  lastname: "Park",
+  email: "lena@lakeshore.example",
+  jobtitle: "Director of Operations",
+  phone: "3125550188",
+  companyId: demoNew.id,
+});
+demoCrm.put("contacts", { firstname: "No", lastname: "Company", email: "nocompany@example.com" });
+const integrations = { key: IntegrationKey.generate(), providers: { demo: demoCrm } };
+setInterval(() => void runDueJobs(db, integrationJobs(integrations)).catch(console.error), 2000);
+
 // PREVIEW_AS=rep shows the screens as a Rep instead of an Admin.
 const viewer = process.env.PREVIEW_AS === "rep" ? repCtx : adminCtx;
 const previewBilling = new FakeGateway();
@@ -225,6 +255,7 @@ const app = createApp(
     billing: process.env.PREVIEW_BILLING === "1" ? previewBilling : null,
     // The preview admin is staff, so the staff console can be tried.
     staffEmails: [viewerUser.email],
+    integrations,
   },
 );
 // End the free week now (the first bill), or bill as on the 1st (?month=1).

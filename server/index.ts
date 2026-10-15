@@ -11,6 +11,11 @@ import { finalizeAllDue } from "./people/service";
 import { StripeGateway } from "./billing/gateway";
 import { runBillingCycle } from "./billing/service";
 import { parseStaffEmails } from "./staff/service";
+import { IntegrationKey } from "./integrations/crypto";
+import { pruneFeed } from "./integrations/feed";
+import { integrationJobs, scheduleSyncs } from "./integrations/jobs";
+import type { IntegrationsConfig } from "./integrations/sync";
+import { pruneJobs, runDueJobs } from "./jobs/queue";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -36,6 +41,14 @@ const billingGateway = stripeKey
 if (stripeKey && !process.env.STRIPE_WEBHOOK_SECRET) {
   console.warn("STRIPE_WEBHOOK_SECRET is not set: Stripe's later payment updates won't arrive");
 }
+// Integrations switch on with INTEGRATIONS_KEY, which seals each service's credentials.
+// Services are added here as they're built (HubSpot first).
+const integrationsKey = process.env.INTEGRATIONS_KEY
+  ? IntegrationKey.fromSecret(process.env.INTEGRATIONS_KEY)
+  : null;
+const integrations: IntegrationsConfig = { key: integrationsKey, providers: {} };
+const jobHandlers = { ...integrationJobs(integrations) };
+
 const app = createApp(db, clerkAuthenticator(db), {
   before: [clerkSession()],
   publicConfig: { clerkPublishableKey },
@@ -47,6 +60,7 @@ const app = createApp(db, clerkAuthenticator(db), {
   // Bagger staff, by email, who can open the staff console. Set in Render only.
   staffEmails: parseStaffEmails(process.env.STAFF_EMAILS),
   onOrgDeleted: deleteClerkOrganization,
+  integrations,
 });
 
 // Seats end on their last day even if nobody from that organization signs in.
@@ -66,6 +80,35 @@ const endSeats = async () => {
 void endSeats();
 const seatTimer = setInterval(endSeats, 60 * 60 * 1000);
 
+// Background jobs (syncs now, more later) run every few seconds; syncs are queued
+// every few minutes for connections that are due; old jobs and changes are pruned hourly.
+let working = false;
+const work = async () => {
+  if (working) return;
+  working = true;
+  try {
+    while ((await runDueJobs(db, jobHandlers)).ran > 0) {
+      // keep going while there's work
+    }
+  } catch (e) {
+    console.error("Background jobs failed", e);
+  } finally {
+    working = false;
+  }
+};
+const jobTimer = setInterval(work, 5000);
+const scheduleTimer = setInterval(
+  () => void scheduleSyncs(db).catch((e) => console.error("Scheduling syncs failed", e)),
+  5 * 60 * 1000,
+);
+const pruneTimer = setInterval(
+  () =>
+    void Promise.all([pruneJobs(db), pruneFeed(db)]).catch((e) =>
+      console.error("Pruning failed", e),
+    ),
+  60 * 60 * 1000,
+);
+
 const port = Number(process.env.PORT ?? 3000);
 const server = app.listen(port, "0.0.0.0", () => {
   console.log(`Bagger listening on port ${port}`);
@@ -73,6 +116,9 @@ const server = app.listen(port, "0.0.0.0", () => {
 
 function shutdown() {
   clearInterval(seatTimer);
+  clearInterval(jobTimer);
+  clearInterval(scheduleTimer);
+  clearInterval(pruneTimer);
   server.close(() => {
     void pool.end().then(() => process.exit(0));
   });

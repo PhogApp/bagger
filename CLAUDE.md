@@ -12,3 +12,5 @@
 - Statuses are per organization (`status_options`, `server/statuses/service.ts`). Records store the status name. Never compare a status to a fixed word such as "Do Not Contact"; look up the option's `effect`. New organizations are seeded from `server/statuses/defaults.ts`.
 - Custom field values live in each record's `custom` jsonb, keyed by the field's fixed `key`. Check and merge them with `settleCustom` (`server/fields/service.ts`); in the client a custom field is named `custom.<key>` and `toBody` gathers them for the API.
 - The staff console (`server/staff/`) is the only code that reads across organizations. Staff are the emails in `STAFF_EMAILS`; their actions go in `staff_actions`, never a customer's history except as a system change.
+- Every history row also feeds `change_feed` (a database trigger), which integrations and webhooks read. Don't write record changes without history, or they won't sync.
+- Work done for an outside service runs inside `asIntegration` (`server/audit/origin.ts`) so its history says "via <service>" and the change isn't sent back. Background work goes through the job queue (`server/jobs/queue.ts`), not timers.

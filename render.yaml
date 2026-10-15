@@ -47,3 +47,6 @@ services:
       # Bagger staff who can open the staff console, comma-separated emails.
       - key: STAFF_EMAILS
         sync: false
+      # Seals the credentials of connected services (HubSpot, …). A random secret, 32+ characters.
+      - key: INTEGRATIONS_KEY
+        sync: false

@@ -40,6 +40,7 @@ export const TOOLS = [
   "setup.pipeline_stages",
   "setup.dnc_list",
   "setup.org_settings",
+  "setup.integrations",
   "account.users_and_roles",
   "account.billing",
   "account.full_export",

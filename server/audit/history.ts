@@ -1,7 +1,16 @@
 import { fieldHistory } from "../../shared/schema";
 import type { Ctx, Db } from "../db/types";
+import { currentOrigin } from "./origin";
 
-export type HistorySource = "user" | "import" | "system";
+export type HistorySource = "user" | "import" | "system" | "integration";
+
+/** Inside a sync, every change is the integration's, whatever the caller said. */
+function origin(source: HistorySource) {
+  const from = currentOrigin();
+  return from
+    ? { source: "integration" as const, via: from.via, connectionId: from.connectionId }
+    : { source };
+}
 
 /** Columns that change on every write and would only add noise. */
 const IGNORED = new Set(["id", "orgId", "createdAt", "updatedAt"]);
@@ -56,7 +65,7 @@ export async function recordUpdate(
       field: c.field,
       oldValue: c.oldValue,
       newValue: c.newValue,
-      source,
+      ...origin(source),
       userId: ctx.userId,
     })),
   );
@@ -75,7 +84,7 @@ export async function recordLifecycle(
     recordType,
     recordId,
     action,
-    source,
+    ...origin(source),
     userId: ctx.userId,
   });
 }

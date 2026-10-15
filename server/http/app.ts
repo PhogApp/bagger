@@ -33,6 +33,8 @@ import * as exportService from "../export/service";
 import * as people from "../people/service";
 import * as billing from "../billing/service";
 import * as staffService from "../staff/service";
+import * as integrations from "../integrations/service";
+import type { IntegrationsConfig } from "../integrations/sync";
 import type { BillingGateway } from "../billing/gateway";
 import { verifyClerkWebhook, type ClerkEvent } from "../people/clerk-webhook";
 import * as dashboard from "../dashboard/service";
@@ -150,6 +152,8 @@ export interface AppOptions {
   billing?: BillingGateway | null;
   /** Lowercased email addresses of Bagger staff, who can open the staff console. */
   staffEmails?: string[];
+  /** Outside services (HubSpot, …) and the key that seals their credentials. */
+  integrations?: IntegrationsConfig;
   /** Called after staff delete an organization, to remove it from sign-in too. */
   onOrgDeleted?: (org: { clerkOrgId: string | null }) => Promise<void>;
 }
@@ -367,6 +371,43 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       return;
     }
     next();
+  });
+
+  // ---- integrations (Admin › Integrations)
+  const integrationsConfig: IntegrationsConfig = options.integrations ?? { key: null, providers: {} };
+  const originOf = (req: Request) => `${req.protocol}://${req.get("host")}`;
+  api.get("/integrations", async (req, res) => {
+    res.json(await integrations.listIntegrations(db, actorOf(req), integrationsConfig));
+  });
+  api.post("/integrations/callback", async (req, res) => {
+    res.json(
+      await integrations.finishConnect(db, actorOf(req), integrationsConfig, req.body, originOf(req)),
+    );
+  });
+  api.post("/integrations/:provider/connect", async (req, res) => {
+    res.json(
+      await integrations.startConnect(
+        db,
+        actorOf(req),
+        integrationsConfig,
+        String(req.params.provider),
+        originOf(req),
+      ),
+    );
+  });
+  api.patch("/integrations/connections/:id", async (req, res) => {
+    await integrations.updateConnection(db, actorOf(req), String(req.params.id), req.body);
+    res.status(204).end();
+  });
+  api.post("/integrations/connections/:id/sync", async (req, res) => {
+    res.json(await integrations.syncNow(db, actorOf(req), String(req.params.id)));
+  });
+  api.get("/integrations/connections/:id/runs", async (req, res) => {
+    res.json(await integrations.listRuns(db, actorOf(req), String(req.params.id)));
+  });
+  api.delete("/integrations/connections/:id", async (req, res) => {
+    await integrations.disconnect(db, actorOf(req), String(req.params.id));
+    res.status(204).end();
   });
 
   // ---- settings, users and roles
@@ -651,6 +692,7 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
         oldValue: fieldHistory.oldValue,
         newValue: fieldHistory.newValue,
         source: fieldHistory.source,
+        via: fieldHistory.via,
         at: fieldHistory.createdAt,
         userId: fieldHistory.userId,
         userName: users.name,

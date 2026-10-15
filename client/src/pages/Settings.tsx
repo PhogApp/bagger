@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Button } from "@/components/ui/button";
+import { Link } from "wouter";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { LogOut } from "lucide-react";
 import { Avatar } from "@/components/AppLayout";
@@ -302,6 +303,16 @@ export function AdminPage() {
         <StatusSettings canEdit={canUse(me, "setup.org_settings")} />
         {canUse(me, "setup.org_settings") && <FieldSettings />}
         <PeopleSettings canManage={canUse(me, "account.users_and_roles")} />
+        {canUse(me, "setup.integrations") && (
+          <Section
+            title="Integrations"
+            description="Connect HubSpot, Salesforce, ZoomInfo, Gmail and Outlook, and choose what each one syncs."
+          >
+            <Link href="/admin/integrations" className={buttonVariants({ variant: "outline" })}>
+              Manage integrations
+            </Link>
+          </Section>
+        )}
         {canUse(me, "account.full_export") && (
           <Section
             title="Export all data"
