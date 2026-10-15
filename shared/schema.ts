@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import type { CallOutcome } from "./calls";
 import {
+  bigint,
+  bigserial,
   boolean,
   check,
   date,
@@ -61,7 +63,12 @@ export const stepTaskStateEnum = pgEnum("step_task_state", [
 
 export const dncKindEnum = pgEnum("dnc_kind", ["email", "domain"]);
 export const historyActionEnum = pgEnum("history_action", ["create", "update", "delete"]);
-export const historySourceEnum = pgEnum("history_source", ["user", "import", "system"]);
+export const historySourceEnum = pgEnum("history_source", [
+  "user",
+  "import",
+  "system",
+  "integration",
+]);
 
 // -------------------------------------------------------------- tenancy
 
@@ -713,6 +720,12 @@ export const fieldHistory = pgTable(
     newValue: text("new_value"),
     source: historySourceEnum("source").notNull().default("user"),
     userId: uuid("user_id").references(() => users.id),
+    /** For source "integration": which service made the change ("HubSpot"). */
+    via: text("via"),
+    /** For source "integration": the connection, so a sync never sends its own change back. */
+    connectionId: uuid("connection_id").references(() => integrationConnections.id, {
+      onDelete: "set null",
+    }),
     createdAt: createdAt(),
   },
   (t) => [index("field_history_record_idx").on(t.orgId, t.recordType, t.recordId, t.createdAt)],
@@ -791,4 +804,150 @@ export const staffActions = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("staff_actions_created_idx").on(t.createdAt)],
+);
+
+// ---------------------------------------------------------- integrations
+
+/**
+ * An organization's link to an outside service (HubSpot, Salesforce,
+ * ZoomInfo, Gmail…), made by an admin signing in there. One per service per
+ * organization. Credentials are encrypted (server/integrations/crypto.ts) and
+ * never leave the server.
+ */
+export const integrationConnections = pgTable(
+  "integration_connections",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    status: text("status").$type<"connected" | "error" | "paused">().notNull().default("connected"),
+    /** Who the service says we're connected as, e.g. "Phog (HubSpot portal 1234)". */
+    accountLabel: text("account_label"),
+    externalAccountId: text("external_account_id"),
+    credentials: text("credentials").notNull(),
+    /** What each kind of record does: { contact: "both" | "pull" | "push" | "off", … } */
+    settings: jsonb("settings")
+      .$type<{ objects?: Record<string, "both" | "pull" | "push" | "off"> }>()
+      .notNull()
+      .default({}),
+    /** Where each sync left off (the change feed position, the last change pulled per object). */
+    state: jsonb("state").$type<Record<string, unknown>>().notNull().default({}),
+    connectedBy: uuid("connected_by").references(() => users.id, { onDelete: "set null" }),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("integration_connections_org_provider_uq").on(t.orgId, t.provider)],
+);
+
+/**
+ * "This Bagger contact is HubSpot contact 12345." What stops a sync from
+ * creating duplicates, in either direction.
+ */
+export const externalLinks = pgTable(
+  "external_links",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => integrationConnections.id, { onDelete: "cascade" }),
+    recordType: text("record_type").notNull(),
+    recordId: uuid("record_id").notNull(),
+    externalId: text("external_id").notNull(),
+    externalUpdatedAt: timestamp("external_updated_at", { withTimezone: true }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("external_links_external_uq").on(t.connectionId, t.recordType, t.externalId),
+    uniqueIndex("external_links_record_uq").on(t.connectionId, t.recordType, t.recordId),
+  ],
+);
+
+/** One sync of one connection: what came in, what went out, what failed. */
+export const syncRuns = pgTable(
+  "sync_runs",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => integrationConnections.id, { onDelete: "cascade" }),
+    status: text("status").$type<"running" | "done" | "failed">().notNull().default("running"),
+    /** { pulled: { contact: { created, updated, unchanged } }, pushed: { … } } */
+    counts: jsonb("counts").$type<Record<string, Record<string, Record<string, number>>>>(),
+    errors: jsonb("errors").$type<{ object: string; id?: string; message: string }[]>(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("sync_runs_connection_idx").on(t.connectionId, t.startedAt)],
+);
+
+/**
+ * Every change to every record, one row per record per transaction, in commit
+ * order. Written by a trigger on field_history, so whatever writes history
+ * (which every change must) feeds it. Webhooks and syncs read it from where
+ * they left off. Kept 30 days.
+ */
+export const changeFeed = pgTable(
+  "change_feed",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    txId: bigint("tx_id", { mode: "number" }).notNull(),
+    recordType: text("record_type").notNull(),
+    recordId: uuid("record_id").notNull(),
+    action: text("action").$type<"create" | "update" | "delete">().notNull(),
+    source: text("source").notNull(),
+    connectionId: uuid("connection_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("change_feed_tx_record_uq").on(t.txId, t.recordType, t.recordId),
+    index("change_feed_org_tx_idx").on(t.orgId, t.txId, t.id),
+  ],
+);
+
+/**
+ * Work done in the background, with retries: syncs now, webhooks and
+ * imports later. Workers claim jobs with SKIP LOCKED, so several servers
+ * can share the queue.
+ */
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: id(),
+    orgId: uuid("org_id").references(() => organizations.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    status: text("status")
+      .$type<"queued" | "running" | "done" | "failed">()
+      .notNull()
+      .default("queued"),
+    /** At most one queued or running job per key, e.g. "sync:<connection>". */
+    dedupeKey: text("dedupe_key"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    runAt: timestamp("run_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("jobs_due_idx").on(t.status, t.runAt),
+    uniqueIndex("jobs_dedupe_uq")
+      .on(t.dedupeKey)
+      .where(sql`${t.status} in ('queued', 'running')`),
+  ],
 );

@@ -12,6 +12,7 @@ import { AccountDetailPage, AccountsPage } from "./pages/Accounts";
 import { ActivitiesPage } from "./pages/Activities";
 import { ContactDetailPage, ContactsPage } from "./pages/Contacts";
 import { DashboardPage } from "./pages/Dashboard";
+import { IntegrationCallbackPage, IntegrationsPage } from "./pages/Integrations";
 import { LeadDetailPage, LeadsPage } from "./pages/Leads";
 import { OpportunitiesPage, OpportunityDetailPage } from "./pages/Opportunities";
 import { OrganizationPage } from "./pages/Organization";
@@ -97,6 +98,8 @@ export function App() {
         <Route path="/sequences/:id" component={SequenceDetailPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/admin" component={AdminPage} />
+        <Route path="/admin/integrations" component={IntegrationsPage} />
+        <Route path="/integrations/callback" component={IntegrationCallbackPage} />
         <Route path="/organization" component={OrganizationPage} />
         <Route path="/" component={DashboardPage} />
         <Route>
