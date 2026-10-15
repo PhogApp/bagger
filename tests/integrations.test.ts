@@ -426,3 +426,21 @@ describe("disconnecting", () => {
     expect(co.id).toBeTruthy();
   });
 });
+
+describe("showing Integrations in Admin", () => {
+  it("only once there's a real service to connect", async () => {
+    const admin = await createOrg(db);
+    expect((await as(admin).get("/api/me")).body.features).toEqual({ integrations: true });
+    const bare = createApp(
+      db,
+      async (req) =>
+        resolveActor(db, { userId: req.header("x-user")!, orgId: req.header("x-org")! }),
+      { integrations: { key, providers: {} } },
+    );
+    const me = await request(bare)
+      .get("/api/me")
+      .set("x-user", admin.userId)
+      .set("x-org", admin.orgId);
+    expect(me.body.features).toEqual({ integrations: false });
+  });
+});

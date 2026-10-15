@@ -98,8 +98,12 @@ export function App() {
         <Route path="/sequences/:id" component={SequenceDetailPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/admin" component={AdminPage} />
-        <Route path="/admin/integrations" component={IntegrationsPage} />
-        <Route path="/integrations/callback" component={IntegrationCallbackPage} />
+        {me.data?.features?.integrations && (
+          <Route path="/admin/integrations" component={IntegrationsPage} />
+        )}
+        {me.data?.features?.integrations && (
+          <Route path="/integrations/callback" component={IntegrationCallbackPage} />
+        )}
         <Route path="/organization" component={OrganizationPage} />
         <Route path="/" component={DashboardPage} />
         <Route>
