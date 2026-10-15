@@ -313,6 +313,16 @@ export function AdminPage() {
             </Link>
           </Section>
         )}
+        {canUse(me, "setup.api") && (
+          <Section
+            title="API and webhooks"
+            description="Keys for other systems to read and change your Bagger data, and the API's documentation."
+          >
+            <Link href="/admin/api" className={buttonVariants({ variant: "outline" })}>
+              Manage API keys
+            </Link>
+          </Section>
+        )}
         {canUse(me, "account.full_export") && (
           <Section
             title="Export all data"

@@ -68,6 +68,7 @@ export const historySourceEnum = pgEnum("history_source", [
   "import",
   "system",
   "integration",
+  "api",
 ]);
 
 // -------------------------------------------------------------- tenancy
@@ -950,4 +951,56 @@ export const jobs = pgTable(
       .on(t.dedupeKey)
       .where(sql`${t.status} in ('queued', 'running')`),
   ],
+);
+
+// ------------------------------------------------------------ public API
+
+/**
+ * Keys for Bagger's public API (/api/v1), made by an admin. Only a hash of
+ * the secret is kept; the full key is shown once, when it's made. A key acts
+ * for the organization, with records created through it owned by whoever made
+ * it unless the request says otherwise.
+ */
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** The visible start of the key ("bgr_3fA9k2Lm"), to tell keys apart. */
+    prefix: text("prefix").notNull().unique(),
+    secretHash: text("secret_hash").notNull(),
+    access: text("access").$type<"read" | "read_write">().notNull(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("api_keys_org_idx").on(t.orgId)],
+);
+
+/**
+ * A request sent with an Idempotency-Key header, and what Bagger answered,
+ * so a retried request (after a timeout, say) doesn't create a record twice.
+ * Kept a day.
+ */
+export const apiIdempotency = pgTable(
+  "api_idempotency",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    keyId: uuid("key_id")
+      .notNull()
+      .references(() => apiKeys.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    statusCode: integer("status_code"),
+    response: jsonb("response"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("api_idempotency_key_uq").on(t.keyId, t.idempotencyKey)],
 );

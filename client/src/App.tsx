@@ -10,6 +10,8 @@ import { BillingPanel, CardReturn, useAddCard } from "./components/BillingPanel"
 import type { Me } from "./lib/api";
 import { AccountDetailPage, AccountsPage } from "./pages/Accounts";
 import { ActivitiesPage } from "./pages/Activities";
+import { ApiDocsPage } from "./pages/ApiDocs";
+import { ApiSettingsPage } from "./pages/ApiSettings";
 import { ContactDetailPage, ContactsPage } from "./pages/Contacts";
 import { DashboardPage } from "./pages/Dashboard";
 import { IntegrationCallbackPage, IntegrationsPage } from "./pages/Integrations";
@@ -98,6 +100,8 @@ export function App() {
         <Route path="/sequences/:id" component={SequenceDetailPage} />
         <Route path="/settings" component={SettingsPage} />
         <Route path="/admin" component={AdminPage} />
+        <Route path="/admin/api" component={ApiSettingsPage} />
+        <Route path="/admin/api/docs" component={ApiDocsPage} />
         {me.data?.features?.integrations && (
           <Route path="/admin/integrations" component={IntegrationsPage} />
         )}

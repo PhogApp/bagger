@@ -16,6 +16,7 @@ import { pruneFeed } from "./integrations/feed";
 import { integrationJobs, scheduleSyncs } from "./integrations/jobs";
 import type { IntegrationsConfig } from "./integrations/sync";
 import { pruneJobs, runDueJobs } from "./jobs/queue";
+import { pruneIdempotency } from "./api/v1";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -103,7 +104,7 @@ const scheduleTimer = setInterval(
 );
 const pruneTimer = setInterval(
   () =>
-    void Promise.all([pruneJobs(db), pruneFeed(db)]).catch((e) =>
+    void Promise.all([pruneJobs(db), pruneFeed(db), pruneIdempotency(db)]).catch((e) =>
       console.error("Pruning failed", e),
     ),
   60 * 60 * 1000,

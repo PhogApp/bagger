@@ -235,7 +235,7 @@ interface HistoryEntry {
   field: string | null;
   oldValue: string | null;
   newValue: string | null;
-  source: "user" | "import" | "system" | "integration";
+  source: "user" | "import" | "system" | "integration" | "api";
   via?: string | null;
   at: string;
   userName: string | null;
@@ -383,8 +383,8 @@ export function History({
           )}
           <p className="text-xs text-muted-foreground">
             {h.userName ?? "System"} · {formatDateTime(h.at)}
-            {h.source === "integration"
-              ? ` · via ${h.via ?? "an integration"}`
+            {h.source === "integration" || h.source === "api"
+              ? ` · via ${h.via ?? (h.source === "api" ? "the API" : "an integration")}`
               : h.source !== "user" && ` · ${h.source}`}
           </p>
         </li>
