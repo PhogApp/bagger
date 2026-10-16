@@ -97,7 +97,9 @@ function curlFor(method: string, path: string, op: Operation): string {
     const example: Record<string, string> = {};
     const names: string[] = schema.required?.length
       ? schema.required.slice(0, 4)
-      : Object.keys(schema.properties ?? {}).filter((n) => n !== "custom").slice(2, 3);
+      : Object.keys(schema.properties ?? {})
+          .filter((n) => n !== "custom")
+          .slice(2, 3);
     for (const name of names) example[name] = "…";
     lines.push(`  -H "Content-Type: application/json"`, `  -d '${JSON.stringify(example)}'`);
   }
@@ -212,6 +214,11 @@ export function ApiDocsPage() {
               </li>
             ))}
             <li>
+              <a href="#webhooks" className="text-muted-foreground hover:text-foreground">
+                Receiving webhooks
+              </a>
+            </li>
+            <li>
               <a href="#models" className="text-muted-foreground hover:text-foreground">
                 What records look like
               </a>
@@ -266,6 +273,7 @@ export function ApiDocsPage() {
                   ))}
                 </section>
               ))}
+              <ReceivingWebhooks />
               <section id="models" className="space-y-4">
                 <h2 className="text-lg font-semibold">What records look like</h2>
                 {Object.entries(d.components.schemas)
@@ -282,5 +290,71 @@ export function ApiDocsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+const EXAMPLE = `{
+  "id": "evt_48213",
+  "type": "contact.updated",
+  "createdAt": "2026-10-15T14:02:11.402Z",
+  "data": {
+    "object": { "id": "…", "firstName": "Dan", "lastName": "Smith", "title": "VP Sales", … },
+    "changedFields": ["title"]
+  }
+}`;
+
+const VERIFY = `import crypto from "node:crypto";
+
+// Use the raw body exactly as it arrived, before parsing it.
+function fromBagger(rawBody, header, secret) {
+  const [, t, v1] = header.match(/^t=(\\d+),v1=([0-9a-f]+)$/) ?? [];
+  if (!t || Math.abs(Date.now() / 1000 - Number(t)) > 300) return false; // older than 5 minutes
+  const expected = crypto.createHmac("sha256", secret).update(\`\${t}.\${rawBody}\`).digest("hex");
+  return crypto.timingSafeEqual(Buffer.from(v1), Buffer.from(expected));
+}`;
+
+function ReceivingWebhooks() {
+  return (
+    <section id="webhooks" className="space-y-3 text-sm">
+      <h2 className="text-lg font-semibold">Receiving webhooks</h2>
+      <p>
+        Bagger POSTs JSON to your address when a lead, contact, account, opportunity or activity is
+        created, updated or deleted, from anywhere: the app, imports, the API or a sync. Event types
+        are <code className="font-mono text-xs">lead.created</code>,{" "}
+        <code className="font-mono text-xs">contact.updated</code>,{" "}
+        <code className="font-mono text-xs">opportunity.deleted</code> and so on, plus{" "}
+        <code className="font-mono text-xs">ping</code> for tests. Updates list the fields that
+        changed; the object is the record as it is now.
+      </p>
+      <pre className="overflow-x-auto rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">
+        {EXAMPLE}
+      </pre>
+      <ul className="list-disc space-y-1 pl-5">
+        <li>
+          Headers: <code className="font-mono text-xs">Bagger-Event</code> (the type),{" "}
+          <code className="font-mono text-xs">Bagger-Delivery</code> (this delivery), and{" "}
+          <code className="font-mono text-xs">Bagger-Signature: t=…,v1=…</code>.
+        </li>
+        <li>
+          Answer with any 2xx within 10 seconds. Anything else, or no answer, and Bagger tries again
+          after 30 seconds, 2 minutes, 8 minutes and so on for about a day. A webhook that fails for
+          3 days straight is switched off; switch it back on in Admin.
+        </li>
+        <li>
+          The same event can arrive twice and events can arrive out of order: use the event{" "}
+          <code className="font-mono text-xs">id</code> to skip repeats, and{" "}
+          <code className="font-mono text-xs">updatedAt</code> on the object to tell which is newer.
+        </li>
+        <li>Check the signature before trusting a message. In Node:</li>
+      </ul>
+      <div className="relative">
+        <pre className="overflow-x-auto rounded-md bg-slate-950 p-3 pr-24 font-mono text-xs text-slate-100">
+          {VERIFY}
+        </pre>
+        <div className="absolute right-2 top-2">
+          <CopyButton text={VERIFY} />
+        </div>
+      </div>
+    </section>
   );
 }

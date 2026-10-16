@@ -2,6 +2,7 @@ import { z } from "zod";
 import { activityInput } from "../activities/service";
 import { accountInput, contactInput, leadInput, opportunityInput } from "../records";
 import { enrollInput } from "../sequences/service";
+import { EVENT_TYPES } from "../webhooks/service";
 import { RESOURCES, responseSchema, type ResourceName } from "./resources";
 
 /**
@@ -280,6 +281,11 @@ export function openApiDocument(): Record<string, unknown> {
       { name: "Activities" },
       { name: "Sequences" },
       {
+        name: "Webhooks",
+        description:
+          "Have Bagger POST to your URL when records change. Set them up in Admin › API and webhooks, or subscribe here (as Zapier does).",
+      },
+      {
         name: "Reference",
         description:
           "Your users, statuses and custom fields, for filling in ownerId, status and custom.",
@@ -343,6 +349,57 @@ export function openApiDocument(): Record<string, unknown> {
           },
         },
       },
+      "/webhooks": {
+        get: {
+          tags: ["Webhooks"],
+          summary: "List webhooks",
+          responses: {
+            "200": { description: "The organization's webhooks (without secrets)" },
+            ...errors,
+          },
+        },
+        post: {
+          tags: ["Webhooks"],
+          summary: "Subscribe a URL",
+          description:
+            "Bagger sends matching changes from now on. The answer includes the signing secret, once. Leave events out to get every event.",
+          parameters: [idempotency],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["url"],
+                  properties: {
+                    url: {
+                      type: "string",
+                      format: "uri",
+                      description: "https, on the public internet.",
+                    },
+                    description: { type: "string" },
+                    events: { type: "array", items: { type: "string", enum: EVENT_TYPES } },
+                  },
+                },
+              },
+            },
+          },
+          responses: { "201": { description: "The webhook, with its secret" }, ...errors },
+        },
+      },
+      "/webhooks/{id}": {
+        delete: {
+          tags: ["Webhooks"],
+          summary: "Unsubscribe",
+          description: "A key can remove the webhooks it made.",
+          parameters: [idParam],
+          responses: {
+            "204": { description: "Removed" },
+            "404": { description: "No such webhook" },
+            ...errors,
+          },
+        },
+      },
       "/users": {
         get: {
           tags: ["Reference"],
@@ -385,6 +442,50 @@ export function openApiDocument(): Record<string, unknown> {
           summary: "List custom fields",
           description: "Send and read custom values in each record's `custom`, by the field's key.",
           responses: { "200": { description: "Custom fields" }, ...errors },
+        },
+      },
+    },
+    webhooks: {
+      recordChanged: {
+        post: {
+          summary: "A record changed",
+          description:
+            "Sent to your URL for each matching change. Headers: Bagger-Event (the type), Bagger-Delivery (this delivery), " +
+            'Bagger-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with your secret>. ' +
+            "Answer 2xx within 10 seconds; otherwise Bagger tries again for about a day. Use the event id to ignore repeats; order isn't guaranteed.",
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["id", "type", "createdAt", "data"],
+                  properties: {
+                    id: {
+                      type: "string",
+                      description: "The event, the same for every webhook that gets it",
+                    },
+                    type: { type: "string", enum: [...EVENT_TYPES, "ping"] },
+                    createdAt: { type: "string", format: "date-time" },
+                    data: {
+                      type: "object",
+                      properties: {
+                        object: {
+                          description:
+                            "The record as it is now (Lead, Contact, Account, Opportunity or Activity)",
+                        },
+                        changedFields: {
+                          type: "array",
+                          items: { type: "string" },
+                          description: "For updates",
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: { "200": { description: "Received" } },
         },
       },
     },
