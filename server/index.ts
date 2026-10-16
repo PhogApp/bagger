@@ -17,6 +17,7 @@ import { integrationJobs, scheduleSyncs } from "./integrations/jobs";
 import type { IntegrationsConfig } from "./integrations/sync";
 import { pruneJobs, runDueJobs } from "./jobs/queue";
 import { pruneIdempotency } from "./api/v1";
+import { pruneDeliveries, scheduleFanOut, webhookJobs } from "./webhooks/service";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -48,7 +49,7 @@ const integrationsKey = process.env.INTEGRATIONS_KEY
   ? IntegrationKey.fromSecret(process.env.INTEGRATIONS_KEY)
   : null;
 const integrations: IntegrationsConfig = { key: integrationsKey, providers: {} };
-const jobHandlers = { ...integrationJobs(integrations) };
+const jobHandlers = { ...integrationJobs(integrations), ...webhookJobs({}) };
 
 const app = createApp(db, clerkAuthenticator(db), {
   before: [clerkSession()],
@@ -62,6 +63,7 @@ const app = createApp(db, clerkAuthenticator(db), {
   staffEmails: parseStaffEmails(process.env.STAFF_EMAILS),
   onOrgDeleted: deleteClerkOrganization,
   integrations,
+  webhooks: {},
 });
 
 // Seats end on their last day even if nobody from that organization signs in.
@@ -97,16 +99,24 @@ const work = async () => {
     working = false;
   }
 };
-const jobTimer = setInterval(work, 5000);
+// New changes become webhook deliveries within a few seconds.
+const jobTimer = setInterval(() => {
+  void scheduleFanOut(db)
+    .catch((e) => console.error("Queueing webhooks failed", e))
+    .finally(work);
+}, 5000);
 const scheduleTimer = setInterval(
   () => void scheduleSyncs(db).catch((e) => console.error("Scheduling syncs failed", e)),
   5 * 60 * 1000,
 );
 const pruneTimer = setInterval(
   () =>
-    void Promise.all([pruneJobs(db), pruneFeed(db), pruneIdempotency(db)]).catch((e) =>
-      console.error("Pruning failed", e),
-    ),
+    void Promise.all([
+      pruneJobs(db),
+      pruneFeed(db),
+      pruneIdempotency(db),
+      pruneDeliveries(db),
+    ]).catch((e) => console.error("Pruning failed", e)),
   60 * 60 * 1000,
 );
 
