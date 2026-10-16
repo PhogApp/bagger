@@ -33,6 +33,9 @@ import * as exportService from "../export/service";
 import * as people from "../people/service";
 import * as billing from "../billing/service";
 import * as staffService from "../staff/service";
+import * as apiKeys from "../api/keys";
+import { openApiDocument } from "../api/openapi";
+import { v1Router } from "../api/v1";
 import * as integrations from "../integrations/service";
 import type { IntegrationsConfig } from "../integrations/sync";
 import type { BillingGateway } from "../billing/gateway";
@@ -239,6 +242,13 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     res.json({ received: true, applied });
   });
 
+  // The public API: for other systems, with an API key rather than a sign-in, so
+  // it sits before the sign-in middleware. Its description needs no key.
+  app.get("/api/v1/openapi.json", (_req, res) => {
+    res.json(openApiDocument());
+  });
+  app.use("/api/v1", v1Router(db, { accountStatus: effectiveStatus }));
+
   for (const handler of options.before ?? []) app.use(handler);
 
   const api = express.Router();
@@ -413,6 +423,18 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   });
   api.delete("/integrations/connections/:id", async (req, res) => {
     await integrations.disconnect(db, actorOf(req), String(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---- API keys (Admin › API and webhooks)
+  api.get("/api-keys", async (req, res) => {
+    res.json(await apiKeys.listKeys(db, actorOf(req)));
+  });
+  api.post("/api-keys", async (req, res) => {
+    res.status(201).json(await apiKeys.createKey(db, actorOf(req), req.body));
+  });
+  api.delete("/api-keys/:id", async (req, res) => {
+    await apiKeys.revokeKey(db, actorOf(req), String(req.params.id));
     res.status(204).end();
   });
 

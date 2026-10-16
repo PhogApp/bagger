@@ -14,3 +14,4 @@
 - The staff console (`server/staff/`) is the only code that reads across organizations. Staff are the emails in `STAFF_EMAILS`; their actions go in `staff_actions`, never a customer's history except as a system change.
 - Every history row also feeds `change_feed` (a database trigger), which integrations and webhooks read. Don't write record changes without history, or they won't sync.
 - Work done for an outside service runs inside `asIntegration` (`server/audit/origin.ts`) so its history says "via <service>" and the change isn't sent back. Background work goes through the job queue (`server/jobs/queue.ts`), not timers.
+- `/api/v1` (`server/api/`) is a promise to people building on Bagger: only add fields and endpoints, never rename or remove. What records look like there is `server/api/resources.ts`, not the table. Breaking changes would be `/api/v2`.

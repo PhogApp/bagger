@@ -41,6 +41,7 @@ export const TOOLS = [
   "setup.dnc_list",
   "setup.org_settings",
   "setup.integrations",
+  "setup.api",
   "account.users_and_roles",
   "account.billing",
   "account.full_export",

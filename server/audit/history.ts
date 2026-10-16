@@ -2,13 +2,13 @@ import { fieldHistory } from "../../shared/schema";
 import type { Ctx, Db } from "../db/types";
 import { currentOrigin } from "./origin";
 
-export type HistorySource = "user" | "import" | "system" | "integration";
+export type HistorySource = "user" | "import" | "system" | "integration" | "api";
 
-/** Inside a sync, every change is the integration's, whatever the caller said. */
+/** Inside a sync or an API request, every change is theirs, whatever the caller said. */
 function origin(source: HistorySource) {
   const from = currentOrigin();
   return from
-    ? { source: "integration" as const, via: from.via, connectionId: from.connectionId }
+    ? { source: from.source, via: from.via, connectionId: from.connectionId }
     : { source };
 }
 
