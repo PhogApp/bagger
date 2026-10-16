@@ -1,7 +1,6 @@
 import { Link } from "wouter";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
 import { ConvertLeadButton } from "@/components/ConvertLead";
-import { ImportButton } from "@/components/ImportRecords";
 import { RecordDetail } from "@/components/RecordDetail";
 import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
@@ -121,11 +120,8 @@ export function LeadsPage() {
       defaults={{ status: defaultStatus(statuses, "leads"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/leads/${id}`}
       listTools={{ statusObject: "leads", customObject: "leads" }}
-      headerActions={
-        canUse(me, "data.import") && permissionsFor(me, "leads").canCreate ? (
-          <ImportButton kind="leads" />
-        ) : undefined
-      }
+      importKind="leads"
+      addFromTopBar
       bulkActions={
         canUse(me, "sequences.bulk_enroll")
           ? (selected, clear) => <BulkEnrollButton kind="leads" people={selected} onDone={clear} />

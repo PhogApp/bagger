@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { canUse, useApi, useMe } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { RichText, RichTextEditor } from "@/components/RichTextEditor";
-import { htmlToText } from "../../../shared/richtext";
+import { forEmailClient, htmlToText } from "../../../shared/richtext";
 import { PhoneLink } from "@/components/PhoneLink";
 import { CALL_OUTCOME_LABELS, CALL_OUTCOMES, type CallOutcome } from "../../../shared/calls";
 import { cn, formatDate, formatDay } from "@/lib/utils";
@@ -83,7 +83,7 @@ async function copyMessage(html: string) {
     try {
       await navigator.clipboard.write([
         new ClipboardItem({
-          "text/html": new Blob([html], { type: "text/html" }),
+          "text/html": new Blob([forEmailClient(html)], { type: "text/html" }),
           "text/plain": new Blob([plain], { type: "text/plain" }),
         }),
       ]);

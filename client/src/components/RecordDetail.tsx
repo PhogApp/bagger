@@ -4,11 +4,20 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { ActivityTimeline, type ActivityAbout } from "@/components/ActivityTimeline";
 import { asText, History, MultiSelect, toBody, valueOf, type Field } from "@/components/RecordPage";
+import { MoreMenu } from "@/components/ListTools";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { RichText, RichTextEditor } from "@/components/RichTextEditor";
+import { PlainTextEditor, RichText, RichTextEditor } from "@/components/RichTextEditor";
 import { ApiError, permissionsFor, useApi, useMe } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { cn, formatDay } from "@/lib/utils";
@@ -98,6 +107,7 @@ function shown(field: Field, raw: unknown): ReactNode {
     case "date":
       return formatDay(value);
     case "textarea":
+    case "plaintext":
       return <span className="whitespace-pre-line">{value}</span>;
     case "richtext":
       return <RichText html={value} />;
@@ -171,7 +181,10 @@ function InlineField<T extends Row>(props: {
       e.preventDefault();
       e.stopPropagation();
       cancel();
-    } else if (e.key === "Enter" && (field.kind !== "textarea" || e.metaKey || e.ctrlKey)) {
+    } else if (
+      e.key === "Enter" &&
+      ((field.kind !== "textarea" && field.kind !== "plaintext") || e.metaKey || e.ctrlKey)
+    ) {
       e.preventDefault();
       void commit(draft);
     }
@@ -216,9 +229,10 @@ function InlineField<T extends Row>(props: {
           ) : field.kind === "richtext" ? (
             <div
               onBlur={(e) => {
-                // Save once focus leaves the editor and its toolbar.
-                if (!e.currentTarget.contains(e.relatedTarget as Node | null) && !asking)
-                  void commit(draft);
+                // Save once focus leaves the editor and its toolbar (not for its link window).
+                const to = e.relatedTarget as HTMLElement | null;
+                if (to?.closest("[data-keep-editing]")) return;
+                if (!e.currentTarget.contains(to) && !asking) void commit(draft);
               }}
               className="space-y-2"
             >
@@ -235,7 +249,12 @@ function InlineField<T extends Row>(props: {
                 <Button size="sm" disabled={saving} onClick={() => void commit(draft)}>
                   Save
                 </Button>
-                <Button size="sm" variant="ghost" onMouseDown={(e) => e.preventDefault()} onClick={cancel}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={cancel}
+                >
                   Cancel
                 </Button>
               </div>
@@ -261,6 +280,18 @@ function InlineField<T extends Row>(props: {
                 </option>
               ))}
             </select>
+          ) : field.kind === "plaintext" ? (
+            <PlainTextEditor
+              id={id}
+              autoFocus
+              rows={field.rows ?? 6}
+              limit={field.maxLength}
+              value={draft}
+              disabled={saving}
+              onChange={setDraft}
+              onBlur={() => !asking && void commit(draft)}
+              onKeyDown={onKey}
+            />
           ) : field.kind === "textarea" ? (
             <Textarea
               id={id}
@@ -368,7 +399,6 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     if (goTo) navigate(goTo, { replace: true });
   }, [goTo, navigate]);
 
-
   const refresh = async (updated: T) => {
     queryClient.setQueryData(key, updated);
     await queryClient.invalidateQueries({ queryKey: [props.object], refetchType: "none" });
@@ -403,6 +433,33 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
     </Link>
   );
 
+  const deleteWindow = (
+    <Dialog open={confirmingDelete} onOpenChange={(open) => !open && setConfirmingDelete(false)}>
+      <DialogContent className="max-w-md" role="alertdialog">
+        <DialogHeader>
+          <DialogTitle>
+            Delete {record.data ? props.title(record.data) : "this record"}?
+          </DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete it? Its history is kept.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setConfirmingDelete(false)}
+            disabled={remove.isPending}
+          >
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={() => remove.mutate()} disabled={remove.isPending}>
+            {remove.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
   if (record.isLoading || goTo)
     return <p className="p-8 text-sm text-muted-foreground">Loading…</p>;
   if (record.error || !record.data) {
@@ -423,6 +480,7 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
 
   return (
     <div>
+      {deleteWindow}
       <div className="border-b bg-background px-6 py-4">
         {back}
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
@@ -437,30 +495,13 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!frozen && props.actions?.(row)}
-            {!frozen &&
-              can.canDelete(row.ownerId) &&
-              (confirmingDelete ? (
-                <>
-                  <Button
-                    variant="destructive"
-                    disabled={remove.isPending}
-                    onClick={() => remove.mutate()}
-                  >
-                    Confirm delete
-                  </Button>
-                  <Button variant="ghost" onClick={() => setConfirmingDelete(false)}>
-                    Keep
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => setConfirmingDelete(true)}
-                >
-                  Delete
-                </Button>
-              ))}
+            {!frozen && can.canDelete(row.ownerId) && (
+              <MoreMenu
+                items={[
+                  { label: "Delete", destructive: true, onClick: () => setConfirmingDelete(true) },
+                ]}
+              />
+            )}
           </div>
         </div>
         {frozen && (
@@ -480,11 +521,6 @@ export function RecordDetail<T extends Row>(props: RecordDetailProps<T>) {
           <section className="rounded-lg border bg-background p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Details</h2>
-              {editable && (
-                <p className="text-xs text-muted-foreground">
-                  Click a field to change it. Changes save on their own.
-                </p>
-              )}
             </div>
             <div className="grid grid-cols-6 gap-x-5 gap-y-3">
               {props.fields.map((field) => (

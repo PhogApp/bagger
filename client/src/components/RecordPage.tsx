@@ -23,14 +23,18 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { RichTextEditor } from "@/components/RichTextEditor";
+import { PlainTextEditor, RichTextEditor } from "@/components/RichTextEditor";
 import { PhoneLink } from "@/components/PhoneLink";
+import { ImportDialog, type ImportKind } from "@/components/ImportRecords";
 import {
   BulkChanges,
+  BulkDeleteDialog,
   ColumnPicker,
   downloadCsv,
-  ExportButton,
+  ExportMenu,
+  MoreMenu,
   OwnerFilter,
+  type MenuItem,
   Pager,
   StatusFilter,
   useListPrefs,
@@ -74,7 +78,9 @@ export interface Field {
     | "textarea"
     | "select"
     | "multiselect"
-    | "richtext";
+    | "richtext"
+    /** Plain text with the Insert field menu (LinkedIn messages). */
+    | "plaintext";
   required?: boolean;
   options?: Option[];
   placeholder?: string;
@@ -82,6 +88,8 @@ export interface Field {
   span?: 2 | 3 | 6;
   /** Height of a textarea, in lines. */
   rows?: number;
+  /** Most characters allowed, counted as you type (plain text). */
+  maxLength?: number;
   /** Short guidance shown under the field. */
   help?: string;
   /** Converts the form's text value before sending, e.g. "true" to true. */
@@ -213,8 +221,16 @@ export interface RecordPageProps<T extends BaseRecord> {
   };
   /** Draws the rows some other way than the table, e.g. a board. Call `open` to edit one. */
   renderList?: (rows: T[], open: (row: T) => void) => ReactNode;
-  /** Extra buttons beside "Add", e.g. Import. */
+  /** Extra buttons in the page header, e.g. the board/list switch. */
   headerActions?: ReactNode;
+  /** The form's fields when they depend on what's chosen (a template's type). */
+  formFields?: (values: Record<string, string>) => Field[];
+  /** Fix up the form after a change, e.g. turn a message to plain text for LinkedIn. */
+  adjust?: (next: Record<string, string>, changed: string) => Record<string, string>;
+  /** Offer "Import CSV" in the three-dot menu, for these records. */
+  importKind?: ImportKind;
+  /** New ones are added from the + menu in the top bar, so the page has no Add button. */
+  addFromTopBar?: boolean;
   /**
    * Turns on row checkboxes. Called with the checked rows to draw the actions
    * that apply to them; call `clear` when an action is finished.
@@ -287,6 +303,15 @@ function FieldInput({
         />
       ) : field.kind === "richtext" ? (
         <RichTextEditor id={id} value={value} onChange={onChange} disabled={disabled} />
+      ) : field.kind === "plaintext" ? (
+        <PlainTextEditor
+          id={id}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+          rows={field.rows ?? 6}
+          limit={field.maxLength}
+        />
       ) : field.kind === "textarea" ? (
         <Textarea
           id={id}
@@ -542,6 +567,31 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
       return next;
     });
 
+  // The three-dot menu: importing, and deleting the ticked rows.
+  const [deleting, setDeleting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const mayDelete =
+    canUse(me, "data.bulk_delete") && selected.every((r) => can.canDelete(r.ownerId));
+  const moreItems: MenuItem[] = [
+    ...(props.importKind && canUse(me, "data.import") && can.canCreate
+      ? [{ label: "Import CSV", onClick: () => setImporting(true) }]
+      : []),
+    ...(tools && canUse(me, "data.bulk_delete")
+      ? [
+          {
+            label: selected.length ? `Delete selected (${selected.length})` : "Delete selected",
+            onClick: () => setDeleting(true),
+            disabled: selected.length === 0 || !mayDelete,
+            destructive: true,
+            hint:
+              selected.length === 0
+                ? `Tick the ${props.title.toLowerCase()} to delete first`
+                : "Some of these aren't yours to delete",
+          },
+        ]
+      : []),
+  ];
+
   const blank = useMemo(
     () => Object.fromEntries(fields.map((f) => [f.name, props.defaults?.[f.name] ?? ""])),
     [fields, props.defaults],
@@ -694,13 +744,18 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
         save.mutate(false);
       }}
     >
-      {fields.map((field) => (
+      {(props.formFields?.(values) ?? fields).map((field) => (
         <FieldInput
           key={field.name}
           field={field}
           idPrefix={object}
           value={values[field.name] ?? ""}
-          onChange={(v) => setValues((prev) => ({ ...prev, [field.name]: v }))}
+          onChange={(v) =>
+            setValues((prev) => {
+              const next = { ...prev, [field.name]: v };
+              return props.adjust ? props.adjust(next, field.name) : next;
+            })
+          }
           disabled={readOnly || busy}
         />
       ))}
@@ -715,7 +770,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
         </div>
         <div className="flex items-center gap-2">
           {props.headerActions}
-          {can.canCreate && (
+          {can.canCreate && !props.addFromTopBar && (
             <Button onClick={() => open("new")}>
               <Plus className="mr-2 h-4 w-4" aria-hidden />
               Add {singular}
@@ -756,22 +811,17 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                     onChange={(st) => setPrefs({ statuses: st })}
                   />
                 )}
-                {(prefs.owner || prefs.statuses.length > 0) && (
+                {(prefs.owner !== "me" || prefs.statuses.length > 0) && (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="h-9"
-                    onClick={() => setPrefs({ owner: "", statuses: [] })}
+                    onClick={() => setPrefs({ owner: "me", statuses: [] })}
                   >
                     Clear filters
                   </Button>
                 )}
-                <span className="ml-auto text-sm text-muted-foreground">
-                  {list.data &&
-                    `${list.data.total.toLocaleString()} ${
-                      list.data.total === 1 ? singular.toLowerCase() : props.title.toLowerCase()
-                    }`}
-                </span>
+                <span className="ml-auto" />
                 {!props.renderList && (
                   <ColumnPicker
                     available={allColumns.map((c) => ({ id: columnId(c), label: c.header }))}
@@ -779,7 +829,15 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                     onChange={(ids) => setPrefs({ columns: ids })}
                   />
                 )}
-                {canExport && <ExportButton busy={exporting} onClick={() => void exportAll()} />}
+                {canExport && (
+                  <ExportMenu
+                    busy={exporting}
+                    selected={selected.length}
+                    onExportAll={() => void exportAll()}
+                    onExportSelected={() => exportRows(selected)}
+                  />
+                )}
+                <MoreMenu items={moreItems} />
               </div>
             )}
           </div>
@@ -797,16 +855,9 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                   users={users}
                   statuses={statusOptions}
                   statusLabel={tools.statusLabel ?? "Status"}
-                  canDelete={selected.every((r) => can.canDelete(r.ownerId))}
                   onDone={() => setChecked(new Set())}
                 />
               )}
-              {canExport && (
-                <ExportButton label="Export selected" onClick={() => exportRows(selected)} />
-              )}
-              <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())}>
-                Clear
-              </Button>
             </div>
           )}
           {list.error ? (
@@ -815,10 +866,14 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             <p className="p-8 text-center text-sm text-muted-foreground">Loading…</p>
           ) : rows.length === 0 ? (
             <p className="p-8 text-center text-sm text-muted-foreground">
-              {q || prefs.owner || prefs.statuses.length
+              {q || (prefs.owner && prefs.owner !== "me") || prefs.statuses.length
                 ? `No ${props.title.toLowerCase()} match${q ? ` “${q}”` : ""}${
-                    prefs.owner || prefs.statuses.length ? " these filters" : ""
+                    (prefs.owner && prefs.owner !== "me") || prefs.statuses.length
+                      ? " these filters"
+                      : ""
                   }.`
+                : prefs.owner === "me" && tools
+                  ? `None of yours yet. Choose "Everyone's" to see the rest of your team's ${props.title.toLowerCase()}.`
                 : q
                   ? `No ${props.title.toLowerCase()} match “${q}”.`
                   : `No ${props.title.toLowerCase()} yet.${
@@ -837,10 +892,15 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                     <TableHead className="w-10">
                       <input
                         type="checkbox"
-                        aria-label="Select all shown"
-                        checked={allChecked}
+                        aria-label={selected.length ? "Clear the selection" : "Select all shown"}
+                        checked={selected.length > 0}
+                        ref={(box) => {
+                          if (box) box.indeterminate = selected.length > 0 && !allChecked;
+                        }}
                         onChange={() =>
-                          setChecked(allChecked ? new Set() : new Set(rows.map((r) => r.id)))
+                          setChecked(
+                            selected.length > 0 ? new Set() : new Set(rows.map((r) => r.id)),
+                          )
                         }
                       />
                     </TableHead>
@@ -917,6 +977,18 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
         </div>
       </div>
 
+      <BulkDeleteDialog
+        open={deleting}
+        object={object}
+        plural={props.title.toLowerCase()}
+        ids={selected.map((r) => r.id)}
+        onClose={() => setDeleting(false)}
+        onDone={() => setChecked(new Set())}
+      />
+      {importing && props.importKind && (
+        <ImportDialog kind={props.importKind} onClose={() => setImporting(false)} />
+      )}
+
       <Dialog open={editing !== null} onOpenChange={(isOpen) => !isOpen && setEditing(null)}>
         <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
@@ -925,7 +997,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             </DialogTitle>
             <DialogDescription>
               {isNew
-                ? `Fields marked * are required.`
+                ? null
                 : readOnly
                   ? "Your role can view this record but not change it."
                   : `Edit this ${singular.toLowerCase()}. Every change is recorded in History.`}

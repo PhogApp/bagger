@@ -27,15 +27,28 @@ export function looksLikeHtml(text: string): boolean {
   return TAG.test(text);
 }
 
-/** Plain text as email HTML: blank lines start paragraphs, single line breaks stay. */
+/**
+ * Plain text as email HTML. Messages are single-spaced, like an email: each
+ * line is a paragraph with no gap after it, and a blank line is an empty
+ * paragraph.
+ */
 export function textToHtml(text: string): string {
-  const paragraphs = text
-    .replace(/\r\n?/g, "\n")
-    .trim()
-    .split(/\n{2,}/)
-    .filter((p) => p.trim() !== "");
-  if (paragraphs.length === 0) return "";
-  return paragraphs.map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`).join("");
+  const lines = text.replace(/\r\n?/g, "\n").trim();
+  if (lines === "") return "";
+  return lines
+    .split("\n")
+    .map((line) => (line.trim() === "" ? "<p></p>" : `<p>${escapeHtml(line)}</p>`))
+    .join("");
+}
+
+/**
+ * The HTML to hand an email program (copying into Gmail or Outlook): the same
+ * single spacing it shows in Bagger, whatever the program's own paragraph gaps.
+ */
+export function forEmailClient(html: string): string {
+  return html
+    .replace(/<p>/g, '<p style="margin:0">')
+    .replace(/<p style="margin:0"><\/p>/g, '<p style="margin:0"><br></p>');
 }
 
 const ENTITIES: Record<string, string> = {
@@ -49,7 +62,8 @@ const ENTITIES: Record<string, string> = {
 };
 
 /**
- * Email HTML as plain text, for LinkedIn, activity notes and the plain copy
+ * Email HTML as plain text (single-spaced, like the message), for LinkedIn,
+ * activity notes and the plain copy
  * placed beside the formatted one. Links keep their address in brackets when
  * it differs from the words; list items become bullets or numbers.
  */
@@ -59,6 +73,8 @@ export function htmlToText(html: string): string {
   const lists: number[] = [];
   const text = html
     .replace(/\r?\n/g, "")
+    // A list item's own paragraph doesn't add a line of its own.
+    .replace(/<\/p>\s*<\/li>/gi, "</li>")
     .replace(
       /<a\s[^>]*href\s*=\s*"([^"]*)"[^>]*>(.*?)<\/a>/gi,
       (_m, href: string, words: string) => {
@@ -80,7 +96,8 @@ export function htmlToText(html: string): string {
       else lists.push(name === "ol" ? 0 : -1);
       return "\n";
     })
-    .replace(/<\/p>/gi, "\n\n")
+    // Single-spaced: a paragraph ends its line; an empty one is a blank line.
+    .replace(/<\/p>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&(#?\w+);/g, (whole, name: string) => ENTITIES[name] ?? whole);
   return text.replace(/\n{3,}/g, "\n\n").trim();

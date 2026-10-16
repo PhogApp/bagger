@@ -1,10 +1,9 @@
 import { AccountRelated } from "@/components/AccountRelated";
-import { ImportButton } from "@/components/ImportRecords";
 import { RecordDetail } from "@/components/RecordDetail";
 import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
-import { canUse, permissionsFor, useMe, useOrgUsers, useStatuses } from "@/lib/api";
+import { useMe, useOrgUsers, useStatuses } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { defaultStatus, nameOf, ownerField, statusColor, statusField } from "./shared";
 
@@ -81,11 +80,8 @@ export function AccountsPage() {
       defaults={{ status: defaultStatus(statuses, "accounts"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/accounts/${id}`}
       listTools={{ statusObject: "accounts", customObject: "accounts" }}
-      headerActions={
-        canUse(me, "data.import") && permissionsFor(me, "accounts").canCreate ? (
-          <ImportButton kind="accounts" />
-        ) : undefined
-      }
+      importKind="accounts"
+      addFromTopBar
       describe={(a) => a.name}
     />
   );

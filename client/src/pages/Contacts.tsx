@@ -1,12 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { BulkEnrollButton } from "@/components/BulkEnroll";
-import { ImportButton } from "@/components/ImportRecords";
 import { RecordDetail } from "@/components/RecordDetail";
 import { useLayout } from "@/lib/fields";
 import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
-import { canUse, permissionsFor, useApi, useMe, useOrgUsers, useStatuses } from "@/lib/api";
+import { canUse, useApi, useMe, useOrgUsers, useStatuses } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { PhoneLink } from "@/components/PhoneLink";
 import type { Account } from "./Accounts";
@@ -156,11 +155,8 @@ export function ContactsPage() {
       defaults={{ status: defaultStatus(statuses, "contacts"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/contacts/${id}`}
       listTools={{ statusObject: "contacts", customObject: "contacts" }}
-      headerActions={
-        canUse(me, "data.import") && permissionsFor(me, "contacts").canCreate ? (
-          <ImportButton kind="contacts" />
-        ) : undefined
-      }
+      importKind="contacts"
+      addFromTopBar
       bulkActions={
         canUse(me, "sequences.bulk_enroll")
           ? (selected, clear) => (
