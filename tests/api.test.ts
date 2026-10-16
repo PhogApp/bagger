@@ -1555,7 +1555,7 @@ describe("template and sequence pages", () => {
     const li = (await as(seller).patch(`/api/templates/${t.id}`, { type: "linkedin" })).body;
     expect(li.body).toBe("Hi {firstName} site (https://phog.ai)\n\n• One");
     const back = (await as(seller).patch(`/api/templates/${t.id}`, { type: "email" })).body;
-    expect(back.body).toBe("<p>Hi {firstName} site (https://phog.ai)</p><p>• One</p>");
+    expect(back.body).toBe("<p>Hi {firstName} site (https://phog.ai)</p><p></p><p>• One</p>");
 
     // A sent email is logged on the person's activity as readable text, merge values escaped in HTML.
     const sequence = (await as(seller).post("/api/sequences", { name: "Rich run" })).body;

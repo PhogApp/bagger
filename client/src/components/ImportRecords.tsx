@@ -249,7 +249,7 @@ const EXAMPLE: Record<CustomFieldType, (f: CustomField) => string> = {
   user: () => "name@yourcompany.com",
 };
 
-function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void }) {
+export function ImportDialog({ kind, onClose }: { kind: ImportKind; onClose: () => void }) {
   const base = KINDS[kind];
   const { data: setup } = useFieldSetup();
   // The organization's own fields can be imported too, as "custom.<key>".

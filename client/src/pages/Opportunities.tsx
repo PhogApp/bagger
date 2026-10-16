@@ -331,6 +331,7 @@ export function OpportunitiesPage() {
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "opportunities"), ownerId: me?.user.id ?? "" }}
       headerActions={toggle}
+      addFromTopBar
       renderList={view === "board" ? board : undefined}
       detailPath={(id) => `/opportunities/${id}`}
       listTools={{

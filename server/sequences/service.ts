@@ -24,6 +24,7 @@ import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
 import * as engine from "./engine";
 import { messageFor, stepKind } from "./html";
+import { linkedinTooLong } from "../../shared/linkedin";
 
 /**
  * Permission-checked operations on sequences. The engine (engine.ts) knows
@@ -93,6 +94,27 @@ async function checkTemplate(
   if (template.type !== TEMPLATE_TYPE_FOR_STEP[type]) {
     throw new ValidationError(`A ${type} step cannot use a ${template.type} template`);
   }
+}
+
+/** A connection request's note, written here or from a template, keeps to LinkedIn's 300. */
+async function checkConnectNote(
+  tx: Db,
+  actor: Actor,
+  type: Step["type"],
+  templateId: string | null | undefined,
+  body: string | null | undefined,
+) {
+  if (type !== "linkedin_connect") return;
+  let text = body;
+  if (templateId) {
+    const [template] = await tx
+      .select({ body: templates.body })
+      .from(templates)
+      .where(and(eq(templates.id, templateId), eq(templates.orgId, actor.orgId)));
+    text = template?.body;
+  }
+  const tooLong = linkedinTooLong(text);
+  if (tooLong) throw new ValidationError(tooLong);
 }
 
 // ------------------------------------------------------------ overview
@@ -173,6 +195,7 @@ export async function addStep(
     const sequence = await loadSequence(tx, actor, sequenceId, true);
     requireRecord(actor.permissions, "sequences", "edit", sequence, actor.userId);
     await checkTemplate(tx, actor, values.type, values.templateId);
+    await checkConnectNote(tx, actor, values.type, values.templateId, values.body);
     const [{ last }] = await tx
       .select({ last: max(sequenceSteps.position) })
       .from(sequenceSteps)
@@ -230,6 +253,13 @@ export async function updateStep(db: Db, actor: Actor, stepId: string, raw: unkn
     const nextType = full.type ?? before.type;
     const nextTemplate = full.templateId === undefined ? before.templateId : full.templateId;
     await checkTemplate(tx, actor, nextType, nextTemplate);
+    await checkConnectNote(
+      tx,
+      actor,
+      nextType,
+      nextTemplate,
+      full.body === undefined ? before.body : full.body,
+    );
     const [after] = await tx
       .update(sequenceSteps)
       .set({ ...full, updatedAt: new Date() })

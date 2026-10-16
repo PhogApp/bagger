@@ -17,6 +17,7 @@ import { stopForPerson } from "../sequences/engine";
 import { messageFor } from "../sequences/html";
 import { accountMatches, personMatches } from "./duplicates";
 import { customInput } from "../fields/service";
+import { linkedinTooLong } from "../../shared/linkedin";
 import { statusEffect } from "../statuses/service";
 import { recordService } from "./service";
 
@@ -388,6 +389,10 @@ export const templateService = recordService<typeof templates.$inferSelect, type
     } else if (before && values.type && values.type !== before.type) {
       values.body = messageFor(kind, before.body);
     }
+    // LinkedIn templates go into connection requests, which allow 300 characters.
+    const tooLong =
+      kind === "linkedin" && typeof values.body === "string" ? linkedinTooLong(values.body) : null;
+    if (tooLong) throw new ValidationError(`body: ${tooLong}`);
   },
   // A step that uses a deleted template would have nothing to send.
   afterDelete: async (tx, _actor, row) => {

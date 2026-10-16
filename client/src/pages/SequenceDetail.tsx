@@ -40,12 +40,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { canUse, permissionsFor, useApi, useMe, useOrgUsers } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import { RichTextEditor } from "@/components/RichTextEditor";
+import { PlainTextEditor, RichTextEditor } from "@/components/RichTextEditor";
+import { LINKEDIN_NOTE_LIMIT } from "../../../shared/linkedin";
 import { htmlToText, looksLikeHtml, textToHtml } from "../../../shared/richtext";
 import { cn, formatDate } from "@/lib/utils";
 import { sequenceFields, useSequenceStats, type Sequence } from "./Sequences";
 import { nameOf } from "./shared";
-import { MERGE_FIELD_HELP, type Template } from "./Templates";
+import { type Template } from "./Templates";
 
 /**
  * A sequence's own page: its details edited in place like any record, then
@@ -121,25 +122,29 @@ interface StepForm {
   type: StepType;
   title: string;
   waitDays: string;
-  source: "template" | "inline";
+  /** The template it follows; "" when the message is written for this step. */
   templateId: string;
   subject: string;
   body: string;
+  /** The template's words were changed here, so the step keeps its own copy. */
+  edited: boolean;
   callScript: string;
-  callObjectives: string;
 }
 
 const BLANK_STEP: StepForm = {
   type: "email",
   title: "",
   waitDays: "0",
-  source: "template",
   templateId: "",
   subject: "",
   body: "",
+  edited: false,
   callScript: "",
-  callObjectives: "",
 };
+
+/** A phone step has no title of its own: it's the Phone Call. */
+const titleOf = (step: { type: StepType; title: string }) =>
+  step.type === "phone_call" ? STEP_LABELS.phone_call : step.title;
 
 /** Add or change one step, in place in the timeline. */
 function StepEditor({
@@ -147,52 +152,64 @@ function StepEditor({
   step,
   templates,
   isFirst,
-  dayWord,
   onClose,
 }: {
   sequenceId: string;
   step: Step | "new";
   templates: Template[];
   isFirst: boolean;
-  dayWord: string;
   onClose: () => void;
 }) {
   const api = useApi();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<StepForm>(() =>
-    step === "new"
-      ? { ...BLANK_STEP, waitDays: isFirst ? "0" : "2" }
-      : {
-          type: step.type,
-          title: step.title,
-          waitDays: String(step.waitDays),
-          source: step.templateId ? "template" : "inline",
-          templateId: step.templateId ?? "",
-          subject: step.subject ?? "",
-          body: step.body ?? "",
-          callScript: step.callScript ?? "",
-          callObjectives: step.callObjectives ?? "",
-        },
-  );
+  const [form, setForm] = useState<StepForm>(() => {
+    if (step === "new") return { ...BLANK_STEP, waitDays: isFirst ? "0" : "2" };
+    const template = step.templateId ? templates.find((t) => t.id === step.templateId) : null;
+    return {
+      type: step.type,
+      title: step.type === "phone_call" ? "" : step.title,
+      waitDays: String(step.waitDays),
+      templateId: template?.id ?? "",
+      // A step that follows a template shows the template's words.
+      subject: (template ? template.subject : step.subject) ?? "",
+      body: (template ? template.body : step.body) ?? "",
+      edited: false,
+      callScript: step.callScript ?? "",
+    };
+  });
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<StepForm>) => setForm((f) => ({ ...f, ...patch }));
+  /** A change to the words themselves: the step now has its own copy. */
+  const write = (patch: Partial<StepForm>) => set({ ...patch, edited: true });
 
   const kind = templateKind(form.type);
   const choices = templates.filter((t) => t.type === kind);
   const chosen = templates.find((t) => t.id === form.templateId);
+  const limit = form.type === "linkedin_connect" ? LINKEDIN_NOTE_LIMIT : undefined;
+  const followsTemplate = Boolean(chosen) && !form.edited;
+
+  const pickTemplate = (id: string) => {
+    const template = templates.find((t) => t.id === id);
+    if (!template) return set({ templateId: "" }); // keep the words, written for this step
+    set({
+      templateId: template.id,
+      subject: template.subject ?? "",
+      body: template.body,
+      edited: false,
+    });
+  };
 
   const save = useMutation({
     mutationFn: () => {
-      const usesTemplate = kind !== null && form.source === "template";
       const body = {
         type: form.type,
-        title: form.title,
+        title: form.type === "phone_call" ? STEP_LABELS.phone_call : form.title,
         waitDays: Number(form.waitDays),
-        templateId: usesTemplate ? form.templateId || null : null,
-        subject: form.type === "email" && !usesTemplate ? form.subject : null,
-        body: kind !== null && !usesTemplate ? form.body : null,
+        // Following a template: its words, kept up to date. Changed here: this step's own.
+        templateId: kind !== null && followsTemplate ? form.templateId : null,
+        subject: form.type === "email" && !followsTemplate ? form.subject : null,
+        body: kind !== null && !followsTemplate ? form.body : null,
         callScript: form.type === "phone_call" ? form.callScript : null,
-        callObjectives: form.type === "phone_call" ? form.callObjectives : null,
       };
       return step === "new"
         ? api("POST", `/api/sequences/${sequenceId}/steps`, body)
@@ -207,15 +224,23 @@ function StepEditor({
     onError: (e: Error) => setError(e.message),
   });
 
+  const plainLength = kind === "linkedin" ? form.body.length : 0;
+
   return (
     <form
-      aria-label={step === "new" ? "New step" : `Edit ${step.title}`}
+      aria-label={step === "new" ? "New step" : `Edit ${titleOf(step)}`}
       className="grid grid-cols-6 gap-3 rounded-lg border-2 border-primary/40 bg-background p-4"
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
         setError(null);
-        if (kind !== null && form.source === "template" && !form.templateId) {
-          setError("Choose a template, or switch to writing the message here.");
+        if (kind !== null && htmlToText(form.body).trim() === "") {
+          setError("Choose a template, or write the message.");
+          return;
+        }
+        if (limit && plainLength > limit) {
+          setError(
+            `LinkedIn allows ${limit} characters in a connection note; this is ${plainLength}.`,
+          );
           return;
         }
         save.mutate();
@@ -239,7 +264,7 @@ function StepEditor({
                   ? form.body
                   : textToHtml(form.body)
                 : htmlToText(form.body);
-            set({ type, templateId: "", body });
+            set({ type, templateId: "", body, edited: true });
           }}
         >
           {Object.entries(STEP_LABELS).map(([value, label]) => (
@@ -250,11 +275,7 @@ function StepEditor({
         </select>
       </div>
       <div className="col-span-6 space-y-1.5 sm:col-span-2">
-        <Label htmlFor="step-wait">
-          {isFirst
-            ? `Wait after enrolling (${dayWord})`
-            : `Wait after the step before (${dayWord})`}
-        </Label>
+        <Label htmlFor="step-wait">Days to wait</Label>
         <Input
           id="step-wait"
           type="number"
@@ -265,145 +286,106 @@ function StepEditor({
           onChange={(e) => set({ waitDays: e.target.value })}
         />
       </div>
-      <div className="col-span-6 space-y-1.5 sm:col-span-2">
-        <Label htmlFor="step-title">Title</Label>
-        <Input
-          id="step-title"
-          required
-          autoFocus
-          value={form.title}
-          onChange={(e) => set({ title: e.target.value })}
-          placeholder="e.g. Intro email"
-        />
-      </div>
+      {form.type !== "phone_call" && (
+        <div className="col-span-6 space-y-1.5 sm:col-span-2">
+          <Label htmlFor="step-title">Title</Label>
+          <Input
+            id="step-title"
+            required
+            autoFocus
+            value={form.title}
+            onChange={(e) => set({ title: e.target.value })}
+            placeholder={form.type === "email" ? "e.g. Intro email" : "e.g. Connect"}
+          />
+        </div>
+      )}
 
       {kind !== null && (
         <>
-          <div
-            className="col-span-6 flex gap-1 rounded-md border p-1"
-            role="radiogroup"
-            aria-label="Message"
-          >
-            {(
-              [
-                ["template", "Use a template"],
-                ["inline", "Write it for this step"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={form.source === value}
-                className={cn(
-                  "flex-1 rounded px-3 py-1.5 text-sm",
-                  form.source === value ? "bg-primary text-primary-foreground" : "hover:bg-muted",
-                )}
-                onClick={() => set({ source: value })}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="col-span-6 space-y-1.5">
+            <Label htmlFor="step-template">Template</Label>
+            <select
+              id="step-template"
+              className={selectClass}
+              value={form.templateId}
+              onChange={(e) => pickTemplate(e.target.value)}
+            >
+              <option value="">None: write it for this step</option>
+              {choices.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            {chosen && followsTemplate ? (
+              <p className="text-xs text-muted-foreground">
+                Changes to this template reach this step on their own.{" "}
+                <Link href={`/templates/${chosen.id}`} className="text-primary hover:underline">
+                  Open template
+                </Link>
+              </p>
+            ) : chosen ? (
+              <p className="text-xs text-muted-foreground">
+                Changed for this step, so later changes to “{chosen.name}” won't reach it.{" "}
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => pickTemplate(chosen.id)}
+                >
+                  Use the template as it is
+                </button>
+              </p>
+            ) : choices.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No {kind === "email" ? "email" : "LinkedIn"} templates yet.{" "}
+                <Link href="/templates?new=1" className="text-primary hover:underline">
+                  Create one
+                </Link>
+                , or write the message here.
+              </p>
+            ) : null}
           </div>
-          {form.source === "template" ? (
+          {form.type === "email" && (
             <div className="col-span-6 space-y-1.5">
-              <Label htmlFor="step-template">Template</Label>
-              <select
-                id="step-template"
-                className={selectClass}
-                value={form.templateId}
-                onChange={(e) => set({ templateId: e.target.value })}
-              >
-                <option value="">Select…</option>
-                {choices.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-              {choices.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  No {kind === "email" ? "email" : "LinkedIn"} templates yet.{" "}
-                  <Link href="/templates?new=1" className="text-primary hover:underline">
-                    Create one
-                  </Link>
-                  , or write the message for this step.
-                </p>
-              ) : chosen ? (
-                <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                  {chosen.subject && <p className="font-medium">{chosen.subject}</p>}
-                  <p className="line-clamp-4 whitespace-pre-line text-muted-foreground">
-                    {htmlToText(chosen.body)}
-                  </p>
-                  <Link
-                    href={`/templates/${chosen.id}`}
-                    className="mt-1 inline-block text-xs text-primary hover:underline"
-                  >
-                    Open template
-                  </Link>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Changes to the template reach this step on their own.
-                </p>
-              )}
+              <Label htmlFor="step-subject">Subject</Label>
+              <Input
+                id="step-subject"
+                value={form.subject}
+                onChange={(e) => write({ subject: e.target.value })}
+              />
             </div>
-          ) : (
-            <>
-              {form.type === "email" && (
-                <div className="col-span-6 space-y-1.5">
-                  <Label htmlFor="step-subject">Subject</Label>
-                  <Input
-                    id="step-subject"
-                    value={form.subject}
-                    onChange={(e) => set({ subject: e.target.value })}
-                  />
-                </div>
-              )}
-              <div className="col-span-6 space-y-1.5">
-                <Label htmlFor="step-body">Message text</Label>
-                {form.type === "email" ? (
-                  <RichTextEditor
-                    id="step-body"
-                    value={form.body}
-                    onChange={(body) => set({ body })}
-                  />
-                ) : (
-                  <Textarea
-                    id="step-body"
-                    rows={7}
-                    value={form.body}
-                    onChange={(e) => set({ body: e.target.value })}
-                  />
-                )}
-                <p className="text-xs text-muted-foreground">{MERGE_FIELD_HELP}</p>
-              </div>
-            </>
           )}
+          <div className="col-span-6 space-y-1.5">
+            <Label htmlFor="step-body">Message</Label>
+            {form.type === "email" ? (
+              <RichTextEditor
+                id="step-body"
+                value={form.body}
+                onChange={(body) => write({ body })}
+              />
+            ) : (
+              <PlainTextEditor
+                id="step-body"
+                rows={6}
+                limit={limit}
+                value={form.body}
+                onChange={(body) => write({ body })}
+              />
+            )}
+          </div>
         </>
       )}
 
       {form.type === "phone_call" && (
-        <>
-          <div className="col-span-6 space-y-1.5">
-            <Label htmlFor="step-objectives">Call objectives</Label>
-            <Textarea
-              id="step-objectives"
-              rows={2}
-              value={form.callObjectives}
-              onChange={(e) => set({ callObjectives: e.target.value })}
-            />
-          </div>
-          <div className="col-span-6 space-y-1.5">
-            <Label htmlFor="step-script">Call script</Label>
-            <Textarea
-              id="step-script"
-              rows={5}
-              value={form.callScript}
-              onChange={(e) => set({ callScript: e.target.value })}
-            />
-          </div>
-        </>
+        <div className="col-span-6 space-y-1.5">
+          <Label htmlFor="step-script">Call script</Label>
+          <Textarea
+            id="step-script"
+            rows={5}
+            value={form.callScript}
+            onChange={(e) => set({ callScript: e.target.value })}
+          />
+        </div>
       )}
 
       <div className="col-span-6 flex items-center justify-between gap-3">
@@ -472,7 +454,7 @@ function StepsPanel({
     [order[index], order[index + by]] = [order[index + by], order[index]];
     act.mutate({
       call: () => api("PUT", `/api/sequences/${sequence.id}/steps/order`, { stepIds: order }),
-      done: `${steps[index].title} moved ${by < 0 ? "up" : "down"}`,
+      done: `${titleOf(steps[index])} moved ${by < 0 ? "up" : "down"}`,
     });
   };
 
@@ -502,7 +484,6 @@ function StepsPanel({
                   step={step}
                   templates={templates}
                   isFirst={index === 0}
-                  dayWord={dayWord}
                   onClose={() => setEditing(null)}
                 />
               </li>
@@ -511,17 +492,23 @@ function StepsPanel({
           const preview = step.templateId
             ? `Template: ${templateName(step.templateId) ?? "(deleted)"}`
             : step.type === "phone_call"
-              ? step.callObjectives || step.callScript
+              ? step.callScript
               : step.subject || (step.body && htmlToText(step.body));
           return (
-            <li key={step.id} className="flex gap-3">
-              <div className="flex w-16 shrink-0 flex-col items-center pt-3 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">Day {days[index] + 1}</span>
+            <li key={step.id} className="flex items-center gap-3">
+              <div className="flex w-16 shrink-0 justify-center">
+                <span
+                  className="flex h-14 w-14 flex-col items-center justify-center rounded-full border-2 border-primary/30 bg-background leading-none"
+                  aria-label={`Day ${days[index] + 1}`}
+                >
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Day
+                  </span>
+                  <span className="text-base font-semibold text-foreground">{days[index] + 1}</span>
+                </span>
               </div>
               <div className="flex min-w-0 flex-1 items-start gap-3 rounded-lg border bg-background p-4">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                  <Icon className="h-4 w-4" aria-hidden />
-                </span>
+                <Icon className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
                 <button
                   type="button"
                   className="min-w-0 flex-1 text-left disabled:cursor-default"
@@ -529,7 +516,7 @@ function StepsPanel({
                   onClick={() => setEditing(step.id)}
                 >
                   <p className="font-medium">
-                    {index + 1}. {step.title}
+                    {index + 1}. {titleOf(step)}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {STEP_LABELS[step.type]} · {waitText(step, index, dayWord)}
@@ -551,7 +538,7 @@ function StepsPanel({
                         onClick={() =>
                           act.mutate({
                             call: () => api("DELETE", `/api/steps/${step.id}`),
-                            done: `${step.title} deleted`,
+                            done: `${titleOf(step)} deleted`,
                           })
                         }
                       >
@@ -566,7 +553,7 @@ function StepsPanel({
                       <Button
                         size="icon"
                         variant="ghost"
-                        aria-label={`Move ${step.title} up`}
+                        aria-label={`Move ${titleOf(step)} up`}
                         disabled={index === 0 || act.isPending}
                         onClick={() => move(index, -1)}
                       >
@@ -575,7 +562,7 @@ function StepsPanel({
                       <Button
                         size="icon"
                         variant="ghost"
-                        aria-label={`Move ${step.title} down`}
+                        aria-label={`Move ${titleOf(step)} down`}
                         disabled={index === steps.length - 1 || act.isPending}
                         onClick={() => move(index, 1)}
                       >
@@ -584,7 +571,7 @@ function StepsPanel({
                       <Button
                         size="icon"
                         variant="ghost"
-                        aria-label={`Edit ${step.title}`}
+                        aria-label={`Edit ${titleOf(step)}`}
                         onClick={() => setEditing(step.id)}
                       >
                         <Pencil className="h-4 w-4" />
@@ -592,7 +579,7 @@ function StepsPanel({
                       <Button
                         size="icon"
                         variant="ghost"
-                        aria-label={`Delete ${step.title}`}
+                        aria-label={`Delete ${titleOf(step)}`}
                         onClick={() => setDeleting(step.id)}
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
@@ -610,7 +597,6 @@ function StepsPanel({
               step="new"
               templates={templates}
               isFirst={steps.length === 0}
-              dayWord={dayWord}
               onClose={() => setEditing(null)}
             />
           </li>
@@ -854,8 +840,8 @@ function EnrollDialog({ sequenceId, onClose }: { sequenceId: string; onClose: ()
         <DialogHeader>
           <DialogTitle>Enroll people</DialogTitle>
           <DialogDescription>
-            Their first step lands in your Roll the Calls queue. A person can be in one sequence at a
-            time. To enroll many at once, tick them on the Leads or Contacts list.
+            Their first step lands in your Roll the Calls queue. A person can be in one sequence at
+            a time. To enroll many at once, tick them on the Leads or Contacts list.
           </DialogDescription>
         </DialogHeader>
         <div className="flex gap-2">

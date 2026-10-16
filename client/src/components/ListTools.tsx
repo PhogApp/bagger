@@ -1,7 +1,15 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Columns3, Download } from "lucide-react";
+import { Columns3, Download, GripVertical, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { canUse, useApi, type Me, type OrgUser, type StatusOption } from "@/lib/api";
 import { count, toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -19,6 +27,8 @@ export interface ListPrefs {
   dir: "asc" | "desc";
   /** "" for everyone's, "me", or a user id. */
   owner: string;
+  /** The person picked an owner themselves; until then lists start on "Mine". */
+  ownerChosen?: boolean;
   statuses: string[];
   /** Activity types, on the Activities list. */
   types: string[];
@@ -29,7 +39,7 @@ const DEFAULT_PREFS: ListPrefs = {
   columns: null,
   sort: null,
   dir: "asc",
-  owner: "",
+  owner: "me",
   statuses: [],
   types: [],
   pageSize: 50,
@@ -41,14 +51,17 @@ export function useListPrefs(list: string): [ListPrefs, (patch: Partial<ListPref
   const [prefs, setPrefs] = useState<ListPrefs>(() => {
     try {
       const saved = localStorage.getItem(key);
-      return saved ? { ...DEFAULT_PREFS, ...JSON.parse(saved) } : DEFAULT_PREFS;
+      if (!saved) return DEFAULT_PREFS;
+      const loaded = { ...DEFAULT_PREFS, ...JSON.parse(saved) } as ListPrefs;
+      // Lists start on "Mine" unless the person chose another owner themselves.
+      return loaded.ownerChosen ? loaded : { ...loaded, owner: DEFAULT_PREFS.owner };
     } catch {
       return DEFAULT_PREFS;
     }
   });
   const update = (patch: Partial<ListPrefs>) =>
     setPrefs((prev) => {
-      const next = { ...prev, ...patch };
+      const next = { ...prev, ...patch, ...("owner" in patch ? { ownerChosen: true } : {}) };
       try {
         localStorage.setItem(key, JSON.stringify(next));
       } catch {
@@ -72,8 +85,9 @@ const selectClass =
 function Popover(props: {
   label: ReactNode;
   ariaLabel: string;
-  children: ReactNode;
+  children: ReactNode | ((close: () => void) => ReactNode);
   align?: "left" | "right";
+  width?: string;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -106,27 +120,46 @@ function Popover(props: {
       {open && (
         <div
           className={cn(
-            "absolute z-20 mt-1 w-72 rounded-md border bg-background p-2 shadow-lg",
+            "absolute z-20 mt-1 rounded-md border bg-background p-2 shadow-lg",
+            props.width ?? "w-72",
             props.align === "right" ? "right-0" : "left-0",
           )}
         >
-          {props.children}
+          {typeof props.children === "function"
+            ? props.children(() => setOpen(false))
+            : props.children}
         </div>
       )}
     </div>
   );
 }
 
-/** Tick the columns to show and put them in order. */
+/** Tick the columns to show, and drag them into order. */
 export function ColumnPicker(props: {
   available: ColumnChoice[];
   shown: string[];
   onChange: (ids: string[] | null) => void;
 }) {
   const shown = props.shown.filter((id) => props.available.some((a) => a.id === id));
-  const rest = props.available.filter((a) => !shown.includes(a.id));
+  // One list: the shown columns in their order, then the rest.
+  const order = [...shown, ...props.available.map((a) => a.id).filter((id) => !shown.includes(id))];
   const label = (id: string) => props.available.find((a) => a.id === id)?.label ?? id;
-  const move = (i: number, by: -1 | 1) => {
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const place = (moving: string, target: string) => {
+    if (moving === target) return;
+    const next = order.filter((id) => id !== moving);
+    next.splice(
+      next.indexOf(target) + (order.indexOf(moving) < order.indexOf(target) ? 1 : 0),
+      0,
+      moving,
+    );
+    props.onChange(next.filter((id) => shown.includes(id)));
+  };
+  /** Alt+arrow moves the focused column, for anyone not using a mouse. */
+  const nudge = (id: string, by: -1 | 1) => {
+    const i = shown.indexOf(id);
+    if (i < 0 || i + by < 0 || i + by >= shown.length) return;
     const next = [...shown];
     [next[i], next[i + by]] = [next[i + by], next[i]];
     props.onChange(next);
@@ -142,66 +175,65 @@ export function ColumnPicker(props: {
         </>
       }
     >
-      <p className="px-1 pb-1 text-xs font-medium text-muted-foreground">Shown</p>
-      <ul className="max-h-64 space-y-0.5 overflow-y-auto">
-        {shown.map((id, i) => (
-          <li key={id} className="flex items-center gap-1 rounded px-1 text-sm hover:bg-muted/60">
-            <label className="flex flex-1 items-center gap-2 py-1">
-              <input
-                type="checkbox"
-                checked
-                disabled={shown.length === 1}
-                onChange={() => props.onChange(shown.filter((x) => x !== id))}
-              />
-              {label(id)}
-            </label>
-            <button
-              type="button"
-              className="p-1 text-muted-foreground disabled:opacity-30"
-              aria-label={`Move ${label(id)} left`}
-              disabled={i === 0}
-              onClick={() => move(i, -1)}
+      <ul className="max-h-80 space-y-0.5 overflow-y-auto" aria-label="Columns">
+        {order.map((id) => {
+          const on = shown.includes(id);
+          return (
+            <li
+              key={id}
+              draggable
+              onDragStart={(e) => {
+                setDragging(id);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", id);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setOver(id);
+              }}
+              onDragLeave={() => setOver((o) => (o === id ? null : o))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragging) place(dragging, id);
+                setDragging(null);
+                setOver(null);
+              }}
+              onDragEnd={() => {
+                setDragging(null);
+                setOver(null);
+              }}
+              className={cn(
+                "flex cursor-grab items-center gap-1.5 rounded px-1 text-sm hover:bg-muted/60 active:cursor-grabbing",
+                dragging === id && "opacity-40",
+                over === id && dragging !== id && "bg-muted ring-1 ring-primary/40",
+              )}
             >
-              <ArrowUp className="h-3.5 w-3.5" aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="p-1 text-muted-foreground disabled:opacity-30"
-              aria-label={`Move ${label(id)} right`}
-              disabled={i === shown.length - 1}
-              onClick={() => move(i, 1)}
-            >
-              <ArrowDown className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          </li>
-        ))}
+              <GripVertical className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              <label className="flex flex-1 items-center gap-2 py-1">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  disabled={on && shown.length === 1}
+                  onKeyDown={(e) => {
+                    if (e.altKey && e.key === "ArrowUp") {
+                      e.preventDefault();
+                      nudge(id, -1);
+                    }
+                    if (e.altKey && e.key === "ArrowDown") {
+                      e.preventDefault();
+                      nudge(id, 1);
+                    }
+                  }}
+                  onChange={() =>
+                    props.onChange(on ? shown.filter((x) => x !== id) : [...shown, id])
+                  }
+                />
+                <span className={cn(!on && "text-muted-foreground")}>{label(id)}</span>
+              </label>
+            </li>
+          );
+        })}
       </ul>
-      {rest.length > 0 && (
-        <>
-          <p className="px-1 pb-1 pt-2 text-xs font-medium text-muted-foreground">More</p>
-          <ul className="max-h-48 space-y-0.5 overflow-y-auto">
-            {rest.map((a) => (
-              <li key={a.id} className="rounded px-1 text-sm hover:bg-muted/60">
-                <label className="flex items-center gap-2 py-1">
-                  <input
-                    type="checkbox"
-                    checked={false}
-                    onChange={() => props.onChange([...shown, a.id])}
-                  />
-                  {a.label}
-                </label>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      <button
-        type="button"
-        className="mt-2 px-1 text-xs text-primary hover:underline"
-        onClick={() => props.onChange(null)}
-      >
-        Back to the standard columns
-      </button>
     </Popover>
   );
 }
@@ -349,7 +381,7 @@ export function downloadCsv(name: string, rows: (string | number | null | undefi
   URL.revokeObjectURL(url);
 }
 
-/** Change owner, change status or delete the ticked rows, within the person's rights. */
+/** Change the owner or status of the ticked rows, within the person's rights. */
 export function BulkChanges(props: {
   object: string;
   plural: string;
@@ -358,15 +390,13 @@ export function BulkChanges(props: {
   users: OrgUser[] | undefined;
   statuses?: StatusChoice[];
   statusLabel: string;
-  canDelete: boolean;
   onDone: () => void;
 }) {
   const api = useApi();
   const queryClient = useQueryClient();
-  const [confirming, setConfirming] = useState(false);
   const singular = props.plural.replace(/ies$/, "y").replace(/s$/, "");
   const run = useMutation({
-    mutationFn: (body: { action: "update" | "delete"; patch?: Record<string, string> }) =>
+    mutationFn: (body: { action: "update"; patch?: Record<string, string> }) =>
       api<{ done: number; skipped: { id: string; reason: string }[] }>(
         "POST",
         `/api/${props.object}/bulk`,
@@ -376,12 +406,11 @@ export function BulkChanges(props: {
         },
       ),
     onSuccess: async (r, body) => {
-      const verb = body.action === "delete" ? "deleted" : "updated";
+      const verb = body.action === "update" ? "updated" : "deleted";
       const reasons = [...new Set(r.skipped.map((s) => s.reason))].join("; ");
       const said = `${count(r.done, singular, props.plural)} ${verb}.`;
       if (r.skipped.length) toast.warning(`${said} ${r.skipped.length} skipped: ${reasons}.`);
       else toast.success(said);
-      setConfirming(false);
       await queryClient.invalidateQueries({ queryKey: [props.object] });
       if (r.skipped.length === 0) props.onDone();
     },
@@ -389,7 +418,6 @@ export function BulkChanges(props: {
   });
   const edit = canUse(props.me, "data.bulk_edit");
   const reassign = canUse(props.me, "data.bulk_reassign");
-  const remove = canUse(props.me, "data.bulk_delete") && props.canDelete;
 
   return (
     <>
@@ -429,47 +457,149 @@ export function BulkChanges(props: {
           ))}
         </select>
       )}
-      {remove &&
-        (confirming ? (
-          <>
-            <Button
-              size="sm"
-              variant="destructive"
-              disabled={run.isPending}
-              onClick={() => run.mutate({ action: "delete" })}
-            >
-              Delete {props.ids.length} {props.plural}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
-              Keep
-            </Button>
-          </>
-        ) : (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-destructive hover:text-destructive"
-            onClick={() => setConfirming(true)}
-          >
-            Delete
-          </Button>
-        ))}
     </>
   );
 }
 
-export function ExportButton(props: { onClick: () => void; busy?: boolean; label?: string }) {
+/** The download icon: export everything that matches, or only the ticked rows. */
+export function ExportMenu(props: {
+  busy?: boolean;
+  selected: number;
+  onExportAll: () => void;
+  onExportSelected: () => void;
+}) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      className="h-9"
-      disabled={props.busy}
-      onClick={props.onClick}
+    <Popover
+      ariaLabel="Export"
+      align="right"
+      width="w-56"
+      label={<Download className="h-4 w-4" aria-hidden />}
     >
-      <Download className="mr-1.5 h-4 w-4" aria-hidden />
-      {props.label ?? "Export"}
-    </Button>
+      {(close) => (
+        <MenuItems
+          close={close}
+          items={[
+            {
+              label: props.busy ? "Exporting…" : "Export all",
+              onClick: props.onExportAll,
+              disabled: props.busy,
+            },
+            {
+              label: props.selected ? `Export selected (${props.selected})` : "Export selected",
+              onClick: props.onExportSelected,
+              disabled: props.selected === 0,
+            },
+          ]}
+        />
+      )}
+    </Popover>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+  /** Shown under the label when it's disabled, e.g. why. */
+  hint?: string;
+}
+
+function MenuItems({ items, close }: { items: MenuItem[]; close: () => void }) {
+  return (
+    <ul role="menu" className="space-y-0.5">
+      {items.map((item) => (
+        <li key={item.label} role="none">
+          <button
+            type="button"
+            role="menuitem"
+            disabled={item.disabled}
+            className={cn(
+              "w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
+              item.destructive && "text-destructive",
+            )}
+            onClick={() => {
+              close();
+              item.onClick();
+            }}
+          >
+            {item.label}
+            {item.disabled && item.hint && (
+              <span className="block text-xs text-muted-foreground">{item.hint}</span>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The three-dot menu: less frequent actions, such as importing or deleting. */
+export function MoreMenu({ items, label = "More actions" }: { items: MenuItem[]; label?: string }) {
+  if (items.length === 0) return null;
+  return (
+    <Popover
+      ariaLabel={label}
+      align="right"
+      width="w-56"
+      label={<MoreHorizontal className="h-4 w-4" aria-hidden />}
+    >
+      {(close) => <MenuItems items={items} close={close} />}
+    </Popover>
+  );
+}
+
+/** "Are you sure you want to delete the selected leads?", then delete them. */
+export function BulkDeleteDialog(props: {
+  open: boolean;
+  object: string;
+  plural: string;
+  ids: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const singular = props.plural.replace(/ies$/, "y").replace(/s$/, "");
+  const run = useMutation({
+    mutationFn: () =>
+      api<{ done: number; skipped: { id: string; reason: string }[] }>(
+        "POST",
+        `/api/${props.object}/bulk`,
+        { ids: props.ids, action: "delete" },
+      ),
+    onSuccess: async (r) => {
+      const reasons = [...new Set(r.skipped.map((s) => s.reason))].join("; ");
+      const said = `${count(r.done, singular, props.plural)} deleted.`;
+      if (r.skipped.length) toast.warning(`${said} ${r.skipped.length} skipped: ${reasons}.`);
+      else toast.success(said);
+      await queryClient.invalidateQueries({ queryKey: [props.object] });
+      props.onClose();
+      if (r.skipped.length === 0) props.onDone();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const n = props.ids.length;
+  return (
+    <Dialog open={props.open} onOpenChange={(open) => !open && props.onClose()}>
+      <DialogContent className="max-w-md" role="alertdialog">
+        <DialogHeader>
+          <DialogTitle>Delete selected {n === 1 ? singular : props.plural}?</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to delete{" "}
+            {n === 1 ? `the selected ${singular}` : `the ${n} selected ${props.plural}`}? They're
+            kept in History.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={props.onClose} disabled={run.isPending}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={() => run.mutate()} disabled={run.isPending}>
+            {run.isPending ? "Deleting…" : `Delete ${count(n, singular, props.plural)}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

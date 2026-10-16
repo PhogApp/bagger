@@ -20,6 +20,7 @@ import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { Brand } from "./Brand";
 import { GlobalSearch } from "./GlobalSearch";
+import { NewRecordMenu } from "./NewRecordMenu";
 import { RunStepsButton } from "./RunSteps";
 
 const NAV: { href: string; label: string; icon: LucideIcon }[] = [
@@ -83,7 +84,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <div className="flex flex-1 justify-center px-6">
           <GlobalSearch />
         </div>
-        <RunStepsButton />
+        <div className="flex items-center gap-2">
+          <NewRecordMenu />
+          <RunStepsButton />
+        </div>
       </header>
       <div className="flex flex-1">
         <nav

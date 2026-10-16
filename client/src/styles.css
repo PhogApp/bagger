@@ -56,18 +56,15 @@
 
 /* Email messages: the formatted text in the editor, previews and Run Steps. */
 @layer components {
+  /* Single-spaced, like an email: Enter starts the next line; a blank line is an empty paragraph. */
   .rich-text {
-    @apply text-sm leading-relaxed;
+    @apply text-sm leading-normal;
   }
   .rich-text p {
     @apply my-0;
   }
-  .rich-text p + p,
-  .rich-text p + ul,
-  .rich-text p + ol,
-  .rich-text ul + p,
-  .rich-text ol + p {
-    @apply mt-3;
+  .rich-text p:empty::before {
+    content: "\00a0";
   }
   .rich-text ul {
     @apply list-disc pl-5;

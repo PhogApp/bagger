@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Link } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   ActivityDialog,
   ActivityStatusBadge,
@@ -14,7 +14,9 @@ import {
   BulkChanges,
   ColumnPicker,
   downloadCsv,
-  ExportButton,
+  BulkDeleteDialog,
+  ExportMenu,
+  MoreMenu,
   OwnerFilter,
   Pager,
   StatusFilter,
@@ -299,7 +301,20 @@ export function ActivitiesPage() {
   const [dialog, setDialog] = useState<{ activity?: Activity; startAs?: ActivityStatus } | null>(
     null,
   );
-  const filtered = Boolean(q || prefs.owner || prefs.statuses.length || prefs.types?.length);
+  const filtered = Boolean(
+    q || prefs.owner !== "me" || prefs.statuses.length || prefs.types?.length,
+  );
+  const [deleting, setDeleting] = useState(false);
+  // /activities?new=1 (from the + menu in the top bar) opens a new one.
+  const [path, navigate] = useLocation();
+  const startNew = new URLSearchParams(useSearch()).get("new") === "1";
+  useEffect(() => {
+    if (!startNew) return;
+    setDialog({ startAs: "completed" });
+    navigate(path, { replace: true });
+    // Only the address should trigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startNew]);
 
   return (
     <div>
@@ -307,17 +322,6 @@ export function ActivitiesPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Activities</h1>
         </div>
-        {can.canCreate && (
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setDialog({ startAs: "open" })}>
-              Plan activity
-            </Button>
-            <Button onClick={() => setDialog({ startAs: "completed" })}>
-              <Plus className="mr-2 h-4 w-4" aria-hidden />
-              Log activity
-            </Button>
-          </div>
-        )}
       </div>
 
       <div className="p-6">
@@ -355,26 +359,54 @@ export function ActivitiesPage() {
                 chosen={prefs.types ?? []}
                 onChange={(types) => setPrefs({ types })}
               />
-              {(prefs.owner || prefs.statuses.length > 0 || (prefs.types ?? []).length > 0) && (
+              {(prefs.owner !== "me" ||
+                prefs.statuses.length > 0 ||
+                (prefs.types ?? []).length > 0) && (
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-9"
-                  onClick={() => setPrefs({ owner: "", statuses: [], types: [] })}
+                  onClick={() => setPrefs({ owner: "me", statuses: [], types: [] })}
                 >
                   Clear filters
                 </Button>
               )}
-              <span className="ml-auto text-sm text-muted-foreground">
-                {list.data &&
-                  `${list.data.total.toLocaleString()} ${list.data.total === 1 ? "activity" : "activities"}`}
-              </span>
+              <span className="ml-auto" />
               <ColumnPicker
                 available={COLUMNS.map((c) => ({ id: c.key, label: c.header }))}
                 shown={shownIds}
                 onChange={(ids) => setPrefs({ columns: ids })}
               />
-              {canExport && <ExportButton busy={exporting} onClick={() => void exportAll()} />}
+              {canExport && (
+                <ExportMenu
+                  busy={exporting}
+                  selected={selected.length}
+                  onExportAll={() => void exportAll()}
+                  onExportSelected={() => exportRows(selected)}
+                />
+              )}
+              <MoreMenu
+                items={
+                  canUse(me, "data.bulk_delete")
+                    ? [
+                        {
+                          label: selected.length
+                            ? `Delete selected (${selected.length})`
+                            : "Delete selected",
+                          onClick: () => setDeleting(true),
+                          disabled:
+                            selected.length === 0 ||
+                            !selected.every((r) => can.canDelete(r.ownerId)),
+                          destructive: true,
+                          hint:
+                            selected.length === 0
+                              ? "Tick the activities to delete first"
+                              : "Some of these aren't yours to delete",
+                        },
+                      ]
+                    : []
+                }
+              />
             </div>
           </div>
 
@@ -389,15 +421,8 @@ export function ActivitiesPage() {
                 users={users}
                 statuses={BULK_STATUSES}
                 statusLabel="Status"
-                canDelete={selected.every((r) => can.canDelete(r.ownerId))}
                 onDone={() => setChecked(new Set())}
               />
-              {canExport && (
-                <ExportButton label="Export selected" onClick={() => exportRows(selected)} />
-              )}
-              <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())}>
-                Clear
-              </Button>
             </div>
           )}
 
@@ -409,7 +434,7 @@ export function ActivitiesPage() {
             <p className="p-8 text-center text-sm text-muted-foreground">
               {filtered
                 ? `No activities match${q ? ` “${q}”` : ""}${filtered && !q ? " these filters" : ""}.`
-                : "No activities yet. Log one here or on any lead, contact, account or opportunity."}
+                : "No activities yet. Add one with + at the top, or on any lead, contact, account or opportunity."}
             </p>
           ) : (
             <Table>
@@ -418,10 +443,13 @@ export function ActivitiesPage() {
                   <TableHead className="w-10">
                     <input
                       type="checkbox"
-                      aria-label="Select all shown"
-                      checked={allChecked}
+                      aria-label={selected.length ? "Clear the selection" : "Select all shown"}
+                      checked={selected.length > 0}
+                      ref={(box) => {
+                        if (box) box.indeterminate = selected.length > 0 && !allChecked;
+                      }}
                       onChange={() =>
-                        setChecked(allChecked ? new Set() : new Set(rows.map((r) => r.id)))
+                        setChecked(selected.length > 0 ? new Set() : new Set(rows.map((r) => r.id)))
                       }
                     />
                   </TableHead>
@@ -523,6 +551,14 @@ export function ActivitiesPage() {
         onOpenChange={(o) => !o && setDialog(null)}
         activity={dialog?.activity}
         startAs={dialog?.startAs}
+      />
+      <BulkDeleteDialog
+        open={deleting}
+        object="activities"
+        plural="activities"
+        ids={selected.map((r) => r.id)}
+        onClose={() => setDeleting(false)}
+        onDone={() => setChecked(new Set())}
       />
     </div>
   );
