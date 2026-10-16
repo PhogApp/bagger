@@ -28,6 +28,7 @@ import { IntegrationKey } from "../server/integrations/crypto";
 import { DemoCrm } from "../server/integrations/demo-crm";
 import { integrationJobs } from "../server/integrations/jobs";
 import { runDueJobs } from "../server/jobs/queue";
+import { scheduleFanOut, webhookJobs } from "../server/webhooks/service";
 import { invoices, memberships, organizations, users } from "../shared/schema";
 import { runBillingCycle } from "../server/billing/service";
 
@@ -231,7 +232,17 @@ demoCrm.put("contacts", {
 });
 demoCrm.put("contacts", { firstname: "No", lastname: "Company", email: "nocompany@example.com" });
 const integrations = { key: IntegrationKey.generate(), providers: { demo: demoCrm } };
-setInterval(() => void runDueJobs(db, integrationJobs(integrations)).catch(console.error), 2000);
+const previewJobs = {
+  ...integrationJobs(integrations),
+  ...webhookJobs({ allowPrivateUrls: true }),
+};
+setInterval(
+  () =>
+    void scheduleFanOut(db)
+      .then(() => runDueJobs(db, previewJobs, 20))
+      .catch(console.error),
+  2000,
+);
 
 // PREVIEW_AS=rep shows the screens as a Rep instead of an Admin.
 const viewer = process.env.PREVIEW_AS === "rep" ? repCtx : adminCtx;
@@ -256,6 +267,7 @@ const app = createApp(
     // The preview admin is staff, so the staff console can be tried.
     staffEmails: [viewerUser.email],
     integrations,
+    webhooks: { allowPrivateUrls: true },
   },
 );
 // End the free week now (the first bill), or bill as on the 1st (?month=1).
@@ -280,5 +292,14 @@ if (process.env.PREVIEW_BILLING === "1") {
     res.json({ decline: previewBilling.decline });
   });
 }
+// A stand-in receiver for trying webhooks: send to http://localhost:4000/preview/hook.
+const hooksReceived: unknown[] = [];
+app.post("/preview/hook", (req, res) => {
+  hooksReceived.push({ headers: req.headers, body: req.body });
+  res.json({ ok: true });
+});
+app.post("/preview/hook/list", (_req, res) => {
+  res.json(hooksReceived);
+});
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => console.log(`Preview at http://localhost:${port}`));

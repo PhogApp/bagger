@@ -36,6 +36,7 @@ import * as staffService from "../staff/service";
 import * as apiKeys from "../api/keys";
 import { openApiDocument } from "../api/openapi";
 import { v1Router } from "../api/v1";
+import * as webhooks from "../webhooks/service";
 import * as integrations from "../integrations/service";
 import type { IntegrationsConfig } from "../integrations/sync";
 import type { BillingGateway } from "../billing/gateway";
@@ -157,6 +158,8 @@ export interface AppOptions {
   staffEmails?: string[];
   /** Outside services (HubSpot, …) and the key that seals their credentials. */
   integrations?: IntegrationsConfig;
+  /** Webhook delivery settings (tests and the preview may send to private addresses). */
+  webhooks?: webhooks.WebhookOptions;
   /** Called after staff delete an organization, to remove it from sign-in too. */
   onOrgDeleted?: (org: { clerkOrgId: string | null }) => Promise<void>;
 }
@@ -247,7 +250,10 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   app.get("/api/v1/openapi.json", (_req, res) => {
     res.json(openApiDocument());
   });
-  app.use("/api/v1", v1Router(db, { accountStatus: effectiveStatus }));
+  app.use(
+    "/api/v1",
+    v1Router(db, { accountStatus: effectiveStatus, webhooks: options.webhooks ?? {} }),
+  );
 
   for (const handler of options.before ?? []) app.use(handler);
 
@@ -435,6 +441,35 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   });
   api.delete("/api-keys/:id", async (req, res) => {
     await apiKeys.revokeKey(db, actorOf(req), String(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---- webhooks (Admin › API and webhooks)
+  const webhookOptions = options.webhooks ?? {};
+  api.get("/webhooks", async (req, res) => {
+    res.json(await webhooks.listEndpoints(db, actorOf(req)));
+  });
+  api.post("/webhooks", async (req, res) => {
+    res.status(201).json(await webhooks.createEndpoint(db, actorOf(req), req.body, webhookOptions));
+  });
+  api.patch("/webhooks/:id", async (req, res) => {
+    res.json(await webhooks.updateEndpoint(db, actorOf(req), String(req.params.id), req.body));
+  });
+  api.delete("/webhooks/:id", async (req, res) => {
+    await webhooks.deleteEndpoint(db, actorOf(req), String(req.params.id));
+    res.status(204).end();
+  });
+  api.post("/webhooks/:id/secret", async (req, res) => {
+    res.json(await webhooks.revealSecret(db, actorOf(req), String(req.params.id)));
+  });
+  api.post("/webhooks/:id/test", async (req, res) => {
+    res.json(await webhooks.sendTest(db, actorOf(req), String(req.params.id)));
+  });
+  api.get("/webhooks/:id/deliveries", async (req, res) => {
+    res.json(await webhooks.listDeliveries(db, actorOf(req), String(req.params.id)));
+  });
+  api.post("/webhook-deliveries/:id/resend", async (req, res) => {
+    await webhooks.resend(db, actorOf(req), String(req.params.id));
     res.status(204).end();
   });
 

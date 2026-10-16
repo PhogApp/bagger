@@ -26,6 +26,7 @@ import { DuplicateError, NotFoundError, ValidationError } from "../errors";
 import { accountService, contactService, leadService, opportunityService } from "../records";
 import { SequenceError } from "../sequences/engine";
 import * as seq from "../sequences/service";
+import * as webhooks from "../webhooks/service";
 import { authenticateKey, type KeyActor } from "./keys";
 import { RESOURCES, serialize, type ResourceName } from "./resources";
 
@@ -218,6 +219,7 @@ async function startIdempotent(
 export interface V1Options {
   /** "active" when the organization can be used; otherwise why not. */
   accountStatus: (actor: Actor) => string;
+  webhooks: webhooks.WebhookOptions;
 }
 
 export function v1Router(db: Db, options: V1Options) {
@@ -511,6 +513,55 @@ export function v1Router(db: Db, options: V1Options) {
     }),
   );
 
+  // ---- webhooks, for systems that subscribe themselves (Zapier and the like)
+  router.get(
+    "/webhooks",
+    handle(async (_req, actor) => ({
+      status: 200,
+      body: {
+        data: (await webhooks.listEndpoints(db, actor, "api")).map((w) => ({
+          id: w.id,
+          url: w.url,
+          description: w.description,
+          events: w.events,
+          status: w.status,
+          createdAt: w.createdAt,
+        })),
+      },
+    })),
+  );
+  router.post(
+    "/webhooks",
+    handle(async (req, actor) => {
+      const made = await webhooks.createEndpoint(
+        db,
+        actor,
+        req.body,
+        options.webhooks,
+        req.apiKey!.key.id,
+      );
+      return {
+        status: 201,
+        body: {
+          id: made.id,
+          url: made.url,
+          description: made.description,
+          events: made.events,
+          status: made.status,
+          secret: made.secret,
+          createdAt: made.createdAt,
+        },
+      };
+    }),
+  );
+  router.delete(
+    "/webhooks/:id",
+    handle(async (req, actor) => {
+      await webhooks.deleteEndpoint(db, actor, idOf(req), req.apiKey!.key.id);
+      return { status: 204 };
+    }),
+  );
+
   router.use((_req, _res, next) => next(new ApiError(404, "not_found", "No such endpoint")));
 
   // One shape for every error: { error: { code, message, details? } }
@@ -545,11 +596,9 @@ export function v1Router(db: Db, options: V1Options) {
       console.error(err);
       e = new ApiError(500, "internal", "Something went wrong on Bagger's side");
     }
-    res
-      .status(e.status)
-      .json({
-        error: { code: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) },
-      });
+    res.status(e.status).json({
+      error: { code: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) },
+    });
   });
 
   return router;

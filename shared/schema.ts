@@ -911,6 +911,8 @@ export const changeFeed = pgTable(
     action: text("action").$type<"create" | "update" | "delete">().notNull(),
     source: text("source").notNull(),
     connectionId: uuid("connection_id"),
+    /** The fields that changed, for an update. */
+    fields: text("fields").array().notNull().default(sql`'{}'::text[]`),
     createdAt: createdAt(),
   },
   (t) => [
@@ -1003,4 +1005,62 @@ export const apiIdempotency = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("api_idempotency_key_uq").on(t.keyId, t.idempotencyKey)],
+);
+
+// --------------------------------------------------------------- webhooks
+
+/**
+ * A URL that wants to hear about changes, set up in Admin › API and webhooks
+ * or through the API (as Zapier does). Each change in the change feed that
+ * matches its events becomes a signed delivery to it.
+ */
+export const webhookEndpoints = pgTable(
+  "webhook_endpoints",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    description: text("description"),
+    /** Event types it wants ("contact.created"); empty means all. */
+    events: text("events").array().notNull().default(sql`'{}'::text[]`),
+    /** Signs every delivery (HMAC-SHA256), so the receiver can tell it's from Bagger. */
+    secret: text("secret").notNull(),
+    status: text("status").$type<"active" | "disabled">().notNull().default("active"),
+    disabledReason: text("disabled_reason"),
+    /** Where in the change feed it has got to. */
+    position: jsonb("position").$type<{ tx: number; id: number }>().notNull(),
+    /** When deliveries started failing without a success since. */
+    failingSince: timestamp("failing_since", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    /** Made through the API with this key (Zapier and the like), rather than by a person. */
+    apiKeyId: uuid("api_key_id").references(() => apiKeys.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("webhook_endpoints_org_idx").on(t.orgId)],
+);
+
+/** One event sent (or being sent) to one endpoint, with how it went. Kept 30 days. */
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    endpointId: uuid("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status").$type<"pending" | "delivered" | "failed">().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastStatusCode: integer("last_status_code"),
+    lastError: text("last_error"),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("webhook_deliveries_endpoint_idx").on(t.endpointId, t.createdAt)],
 );
