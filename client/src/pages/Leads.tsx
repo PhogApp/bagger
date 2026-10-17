@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, permissionsFor, useMe, useOrgUsers, useStatuses } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { PhoneLink } from "@/components/PhoneLink";
+import { SequenceHistory, sequenceColumns } from "@/components/SequenceBits";
 import {
   confirmStatusChange,
   defaultStatus,
@@ -87,6 +88,7 @@ export function LeadsPage() {
         <StatusBadge status={l.status} color={statusColor(statuses, "leads", l.status)} />
       ),
     },
+    ...sequenceColumns<Lead>(),
 
     {
       header: "Email",
@@ -119,7 +121,7 @@ export function LeadsPage() {
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "leads"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/leads/${id}`}
-      listTools={{ statusObject: "leads", customObject: "leads" }}
+      listTools={{ statusObject: "leads", customObject: "leads", sequences: "people" }}
       importKind="leads"
       addFromTopBar
       bulkActions={
@@ -173,6 +175,7 @@ export function LeadDetailPage({ params }: { params: { id: string } }) {
         </>
       )}
       confirm={(field, value) => confirmStatusChange(statuses, "leads", field, value)}
+      below={(l) => <SequenceHistory kind="leads" id={l.id} />}
       activity={(l) => ({ leadId: l.id })}
     />
   );

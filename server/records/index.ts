@@ -144,6 +144,7 @@ export const leadService = recordService<typeof leads.$inferSelect, typeof leadI
     updatedAt: leads.updatedAt,
   },
   customObject: "leads",
+  sequenceKind: "leads",
   input: leadInput,
   search: [leads.firstName, leads.lastName, leads.email, leads.company, leads.cellPhone],
   orderBy: [leads.lastName, leads.firstName],
@@ -177,6 +178,7 @@ export const accountService = recordService<typeof accounts.$inferSelect, typeof
     updatedAt: accounts.updatedAt,
   },
   customObject: "accounts",
+  sequenceKind: "accounts",
   input: accountInput,
   search: [accounts.name, accounts.website],
   orderBy: [accounts.name],
@@ -217,6 +219,7 @@ export const contactService = recordService<typeof contacts.$inferSelect, typeof
     updatedAt: contacts.updatedAt,
   },
   customObject: "contacts",
+  sequenceKind: "contacts",
   filters: { accountId: contacts.accountId },
   input: contactInput,
   search: [

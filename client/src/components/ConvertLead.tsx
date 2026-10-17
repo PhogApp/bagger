@@ -22,6 +22,19 @@ interface Preview {
   matches: { id: string; name: string }[];
   existingContact: string | null;
   canCreateAccount: boolean;
+  domain: string | null;
+  sameDomain: {
+    id: string;
+    name: string;
+    email: string;
+    title: string | null;
+    company: string | null;
+  }[];
+}
+interface ConvertResult {
+  contactId: string;
+  endedSequence: boolean;
+  also: { converted: number; skipped: { id: string; reason: string }[] };
 }
 interface AccountRow {
   id: string;
@@ -77,6 +90,9 @@ function ConvertDialog({
   const [otherId, setOtherId] = useState("");
   const [name, setName] = useState("");
   const [website, setWebsite] = useState("");
+  // Other leads at the same company to convert too; none until asked for.
+  const [alsoOn, setAlsoOn] = useState(false);
+  const [also, setAlso] = useState<Set<string>>(new Set());
 
   const data = preview.data;
   useEffect(() => {
@@ -84,26 +100,57 @@ function ConvertDialog({
     setName(data.suggestedAccountName ?? "");
     setWebsite(data.suggestedWebsite ?? "");
     setChoice(
-      data.matches.length > 0 ? `match:${data.matches[0].id}` : data.canCreateAccount ? "new" : "other",
+      data.matches.length > 0
+        ? `match:${data.matches[0].id}`
+        : data.canCreateAccount
+          ? "new"
+          : "other",
     );
+    setAlso(new Set(data.sameDomain.map((l) => l.id)));
   }, [data]);
+  const alsoIds = alsoOn ? [...also] : [];
 
   const convert = useMutation({
     mutationFn: () => {
       const body =
         choice === "new"
-          ? { newAccount: { name, website } }
-          : { accountId: choice === "other" ? otherId : choice.replace("match:", "") };
-      return api<{ contactId: string }>("POST", `/api/leads/${lead.id}/convert`, body);
+          ? { newAccount: { name, website }, alsoLeadIds: alsoIds }
+          : {
+              accountId: choice === "other" ? otherId : choice.replace("match:", ""),
+              alsoLeadIds: alsoIds,
+            };
+      return api<ConvertResult>("POST", `/api/leads/${lead.id}/convert`, body);
     },
     onSuccess: async (result) => {
-      for (const key of ["leads", "contacts", "accounts", "tasks"]) {
+      for (const key of [
+        "leads",
+        "contacts",
+        "accounts",
+        "tasks",
+        "sequence-history",
+        "sequences",
+      ]) {
         await queryClient.invalidateQueries({ queryKey: [key] });
       }
       onClose();
       onDone();
       navigate(`/contacts/${result.contactId}`);
-      toast.success(`${lead.firstName} ${lead.lastName} is now a contact`);
+      const who = `${lead.firstName} ${lead.lastName}`;
+      const n = result.also.converted;
+      toast.success(
+        (n > 0
+          ? `${who} and ${n} other${n === 1 ? "" : "s"} are now contacts`
+          : `${who} is now a contact`) +
+          (result.endedSequence ? `. ${lead.firstName}'s sequence has ended.` : ""),
+      );
+      if (result.also.skipped.length > 0) {
+        const names = new Map(data?.sameDomain.map((l) => [l.id, l.name]));
+        toast.warning(
+          `Not converted: ${result.also.skipped
+            .map((x) => `${names.get(x.id) ?? "a lead"} (${x.reason})`)
+            .join(", ")}`,
+        );
+      }
     },
   });
 
@@ -132,7 +179,8 @@ function ConvertDialog({
           </DialogTitle>
           <DialogDescription>
             The contact keeps this lead's details, owner, status and history. If they are in a
-            sequence it carries on from the same step. The lead leaves the Leads list.
+            sequence, it ends: converting means something has happened. The lead leaves the Leads
+            list; its sequence history shows on the account.
           </DialogDescription>
         </DialogHeader>
 
@@ -141,9 +189,12 @@ function ConvertDialog({
         ) : preview.error ? (
           <p className="text-sm text-destructive">{preview.error.message}</p>
         ) : data?.existingContact ? (
-          <p role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            This email already belongs to a contact: {data.existingContact}. A second contact
-            can't be made from this lead; delete the lead if it is no longer needed.
+          <p
+            role="alert"
+            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            This email already belongs to a contact: {data.existingContact}. A second contact can't
+            be made from this lead; delete the lead if it is no longer needed.
           </p>
         ) : data ? (
           <fieldset className="space-y-3">
@@ -166,7 +217,11 @@ function ConvertDialog({
                   <div className="grid grid-cols-2 gap-3 pl-6">
                     <div className="space-y-1.5">
                       <Label htmlFor="convert-name">Account name *</Label>
-                      <Input id="convert-name" value={name} onChange={(e) => setName(e.target.value)} />
+                      <Input
+                        id="convert-name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="convert-website">Website</Label>
@@ -206,6 +261,58 @@ function ConvertDialog({
           </fieldset>
         ) : null}
 
+        {data && !data.existingContact && data.sameDomain.length > 0 && (
+          <div className="space-y-2 border-t pt-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={alsoOn}
+                onChange={(e) => setAlsoOn(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">
+                  Also convert{" "}
+                  {data.sameDomain.length === 1
+                    ? "the other lead"
+                    : `the ${data.sameDomain.length} other leads`}{" "}
+                  at {data.domain}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  Into the same account. Each becomes a contact, and any sequence they're in ends.
+                </span>
+              </span>
+            </label>
+            {alsoOn && (
+              <ul className="max-h-44 space-y-0.5 overflow-y-auto pl-6">
+                {data.sameDomain.map((l) => (
+                  <li key={l.id}>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={also.has(l.id)}
+                        onChange={(e) => {
+                          const next = new Set(also);
+                          if (e.target.checked) next.add(l.id);
+                          else next.delete(l.id);
+                          setAlso(next);
+                        }}
+                      />
+                      <span className="truncate">
+                        {l.name}
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {[l.title, l.company, l.email].filter(Boolean).join(" · ")}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {convert.error && (
           <p role="alert" className="text-sm text-destructive">
             {convert.error.message}
@@ -218,7 +325,7 @@ function ConvertDialog({
           </Button>
           {data && !data.existingContact && (
             <Button disabled={!ready || convert.isPending} onClick={() => convert.mutate()}>
-              Convert
+              {alsoIds.length > 0 ? `Convert ${alsoIds.length + 1}` : "Convert"}
             </Button>
           )}
         </DialogFooter>

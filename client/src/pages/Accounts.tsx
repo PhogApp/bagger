@@ -5,6 +5,13 @@ import { RecordPage, type Column, type Field } from "@/components/RecordPage";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useMe, useOrgUsers, useStatuses } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import {
+  csvLast,
+  LastSequenceCell,
+  SequenceCountCell,
+  SequenceHistory,
+  type SequenceSummary,
+} from "@/components/SequenceBits";
 import { defaultStatus, nameOf, ownerField, statusColor, statusField } from "./shared";
 
 export interface Account {
@@ -59,6 +66,25 @@ export function AccountsPage() {
         <StatusBadge status={a.status} color={statusColor(statuses, "accounts", a.status)} />
       ),
     },
+    {
+      key: "sequences",
+      header: "Sequences",
+      sort: "sequence",
+      fresh: true,
+      csv: (a) => {
+        const s = a.sequences as SequenceSummary | undefined;
+        return s ? `${s.inNow} in one now; ${s.total} run${s.total === 1 ? "" : "s"}` : "";
+      },
+      cell: (a) => <SequenceCountCell summary={a.sequences as SequenceSummary} account />,
+    },
+    {
+      key: "lastSequence",
+      header: "Last sequence",
+      sort: "lastSequence",
+      hidden: true,
+      csv: (a) => csvLast(a.sequences as SequenceSummary),
+      cell: (a) => <LastSequenceCell summary={a.sequences as SequenceSummary} />,
+    },
     { header: "Created", sort: "createdAt", cell: (a) => formatDate(a.createdAt) },
     {
       header: "Last Modified",
@@ -79,7 +105,7 @@ export function AccountsPage() {
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "accounts"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/accounts/${id}`}
-      listTools={{ statusObject: "accounts", customObject: "accounts" }}
+      listTools={{ statusObject: "accounts", customObject: "accounts", sequences: "accounts" }}
       importKind="accounts"
       addFromTopBar
       describe={(a) => a.name}
@@ -104,9 +130,12 @@ export function AccountDetailPage({ params }: { params: { id: string } }) {
         <StatusBadge status={a.status} color={statusColor(statuses, "accounts", a.status)} />
       )}
       below={(a) => (
-        <section className="rounded-lg border bg-background p-5">
-          <AccountRelated accountId={a.id} />
-        </section>
+        <>
+          <section className="rounded-lg border bg-background p-5">
+            <AccountRelated accountId={a.id} />
+          </section>
+          <SequenceHistory kind="accounts" id={a.id} />
+        </>
       )}
       activity={(a) => ({ accountId: a.id })}
     />

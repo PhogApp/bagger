@@ -22,6 +22,7 @@ import {
 } from "../server/records";
 import { localDate } from "../server/sequences/dates";
 import * as seq from "../server/sequences/service";
+import { convertLead } from "../server/records/convert";
 import { addMember, createOrg, createTestDb } from "./helpers";
 import { FakeGateway } from "../server/billing/gateway";
 import { IntegrationKey } from "../server/integrations/crypto";
@@ -146,6 +147,37 @@ for (const lead of enrolled.slice(0, 4)) {
     await seq.snooze(db, owner, call!.id, { dueOn: localDate(new Date(), "America/Chicago") });
   }
 }
+
+// Some sequence history, so the lists show people in every state.
+const reengage = await sequenceService.create(db, admin, {
+  name: "Re-engage",
+  description: "One last note",
+});
+await seq.addStep(db, admin, reengage.id, {
+  type: "email",
+  title: "Check in",
+  templateId: intro.id,
+});
+const byName = (last: string) => enrolled.find((l) => l.lastName === last)!;
+{
+  // Preston: finished Re-engage, then replied to Outbound.
+  const strait = byName("Strait");
+  const first = await seq.enrollPerson(db, rep, reengage.id, { leadId: strait.id });
+  await seq.complete(db, rep, first.task.id, {});
+  const second = await seq.enrollPerson(db, rep, outbound.id, { leadId: strait.id });
+  await seq.stop(db, rep, second.enrollment.id, { reason: "replied" });
+  // Jill is paused partway.
+  const [jill] = await db
+    .execute(
+      sql`select id from enrollments where lead_id = ${byName("Rude").id} and state = 'active'`,
+    )
+    .then((r) => r.rows as { id: string }[]);
+  await seq.pause(db, rep, jill.id);
+}
+// Mikey met with us: converted, which ends his sequence; his history shows on the account.
+await convertLead(db, admin, byName("Nichols").id, {
+  newAccount: { name: "TerraMai", website: "terramai.example" },
+});
 
 // Other customers, for the staff console: one in each state.
 const staffDay = localDate(new Date(), "America/Chicago");

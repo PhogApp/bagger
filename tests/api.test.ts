@@ -520,7 +520,7 @@ describe("converting a lead to a contact", () => {
       newAccount: { name: "Harborline Marine", website: "harborline.example" },
     });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ accountCreated: true, enrollments: 1 });
+    expect(res.body).toMatchObject({ accountCreated: true, endedSequence: true });
 
     const contact = (await as(rep).get(`/api/contacts/${res.body.contactId}`)).body;
     expect(contact).toMatchObject({
@@ -536,15 +536,15 @@ describe("converting a lead to a contact", () => {
     const account = (await as(rep).get(`/api/accounts/${res.body.accountId}`)).body;
     expect(account).toMatchObject({ name: "Harborline Marine", website: "https://harborline.example" });
 
-    // The sequence carries on from step two, now for the contact.
+    // Converting ends the lead's sequence; its history stays with the lead.
     const due = (await as(rep).get("/api/tasks/due")).body;
-    const task = due.find((t: { person: { contactId: string } }) => t.person.contactId === contact.id);
-    expect(task).toMatchObject({ step: { title: "Two" }, person: { leadId: null } });
+    expect(due.some((t: { person: { contactId: string } }) => t.person.contactId === contact.id)).toBe(false);
     const people = (await as(rep).get(`/api/sequences/${sequence.id}/enrollments`)).body;
     expect(people).toHaveLength(1);
-    expect(people[0]).toMatchObject({ contactId: contact.id, leadId: null, state: "active" });
-    const done = await as(rep).post(`/api/tasks/${task.taskId}/complete`, { callOutcome: "connected" });
-    expect(done.status).toBe(200);
+    expect(people[0]).toMatchObject({ leadId: lead.id, contactId: null, state: "ended", endReason: "converted" });
+    const onAccount = (await as(rep).get(`/api/accounts/${res.body.accountId}/sequences`)).body;
+    expect(onAccount).toMatchObject([{ asLead: true, endReason: "converted" }]);
+    expect((await as(rep).get(`/api/contacts/${contact.id}/sequences`)).body).toEqual([]);
 
     // The lead leaves the list, can't be changed, and can't be enrolled again.
     expect((await as(rep).get("/api/leads?q=harborline")).body).toHaveLength(0);
@@ -602,7 +602,7 @@ describe("converting a lead to a contact", () => {
     expect((await as(outsider).post(`/api/leads/${lead.id}/convert`, { accountId: foreign.id })).status).toBe(404);
 
     const res = await as(rep).post(`/api/leads/${lead.id}/convert`, { accountId: bySite.id });
-    expect(res.body).toMatchObject({ accountId: bySite.id, accountCreated: false, enrollments: 0 });
+    expect(res.body).toMatchObject({ accountId: bySite.id, accountCreated: false, endedSequence: false });
     // A personal email address suggests no website.
     const personal = (await as(rep).post("/api/leads", newLead({ email: "someone@gmail.com", company: "" }))).body;
     const none = (await as(rep).get(`/api/leads/${personal.id}/conversion`)).body;

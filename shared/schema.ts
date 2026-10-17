@@ -53,6 +53,7 @@ export const enrollmentEndReasonEnum = pgEnum("enrollment_end_reason", [
   "bounced",
   "status_change",
   "removed",
+  "converted",
 ]);
 export const stepTaskStateEnum = pgEnum("step_task_state", [
   "open",
@@ -647,6 +648,9 @@ export const enrollments = pgTable(
   },
   (t) => [
     index("enrollments_org_seq_idx").on(t.orgId, t.sequenceId),
+    // A person's sequence history, for lists and record pages.
+    index("enrollments_lead_idx").on(t.leadId),
+    index("enrollments_contact_idx").on(t.contactId),
     check(
       "enrollments_one_person",
       sql`(${t.leadId} is not null and ${t.contactId} is null) or (${t.leadId} is null and ${t.contactId} is not null)`,
