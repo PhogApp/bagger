@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { useLocation, useSearch } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,6 +27,7 @@ import { PlainTextEditor, RichTextEditor } from "@/components/RichTextEditor";
 import { PhoneLink } from "@/components/PhoneLink";
 import { ImportDialog, type ImportKind } from "@/components/ImportRecords";
 import { OUTCOME_ORDER, OUTCOMES } from "@/components/SequenceBits";
+import { ListCell } from "@/components/ListCell";
 import {
   BulkChanges,
   BulkDeleteDialog,
@@ -52,7 +53,7 @@ import {
   useStatuses,
   type StatusObject,
 } from "@/lib/api";
-import { customFieldAsField, useFieldSetup, type LayoutObject } from "@/lib/fields";
+import { type LayoutObject } from "@/lib/fields";
 import { count, toast } from "@/lib/toast";
 import { cn, formatDateTime } from "@/lib/utils";
 import { htmlToText } from "../../../shared/richtext";
@@ -178,6 +179,10 @@ export interface Column<T> {
   csv?: (row: T) => string | number | null | undefined;
   /** Offered in the column picker but not shown until chosen. */
   hidden?: boolean;
+  /** The field this column changes, for lists edited in place (e.g. "title", "custom.region"). */
+  field?: string;
+  /** The record's name: a link that opens it. */
+  opens?: boolean;
   /**
    * New to the list: shown even to people who had already chosen their
    * columns, until they choose again. (The picker remembers which columns
@@ -250,6 +255,13 @@ export interface RecordPageProps<T extends BaseRecord> {
    * that apply to them; call `clear` when an action is finished.
    */
   bulkActions?: (selected: T[], clear: () => void) => ReactNode;
+  /**
+   * Cells with a `field` are changed in place with one click; the name opens
+   * the record. Every field of the record can be added as a column.
+   */
+  inlineEdit?: boolean;
+  /** A question to ask before saving a change with side effects; null to just save. */
+  confirm?: (field: string, value: string, row: T) => string | null;
 }
 
 interface DuplicateMatch {
@@ -453,7 +465,6 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   const tools = props.listTools;
   const { data: users } = useOrgUsers();
   const { data: statuses } = useStatuses();
-  const { data: fieldSetup } = useFieldSetup();
   const [prefs, setPrefs] = useListPrefs(object);
   const [offset, setOffset] = useState(0);
   const statusOptions = tools?.statusObject
@@ -508,40 +519,80 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
     queryKey: [object, "list", query],
     queryFn: () => api<{ rows: T[]; total: number }>("GET", `/api/${object}?${query}`),
     placeholderData: (previous) => previous,
+    // Rows changed in place stay where they are until the list is reloaded.
+    refetchOnWindowFocus: !props.inlineEdit,
   });
 
-  // Every column the picker offers: the page's own, then custom fields.
-  const allColumns: Column<T>[] = [
-    ...props.columns,
-    ...(tools?.customObject
-      ? (fieldSetup?.fields ?? [])
-          .filter((f) => f.object === tools.customObject && !f.archived)
-          .map((def): Column<T> => {
-            const field = customFieldAsField(def, users);
-            const read = (row: T) => valueOf(row as unknown as Record<string, unknown>, field.name);
-            const text = (row: T) => {
+  /**
+   * Save one field from a list cell. The row is updated where it stands
+   * (even if it no longer matches the filters) and the list isn't reloaded,
+   * so nothing jumps while someone works down it.
+   */
+  const saveCell = async (row: T, field: Field, value: string, before: unknown) => {
+    const patchRow = async (raw: unknown) => {
+      const updated = await api<T>(
+        "PATCH",
+        `/api/${object}/${row.id}`,
+        toBody({ [field.name]: field.parse ? field.parse(raw as string) : raw }),
+      );
+      queryClient.setQueriesData<{ rows: T[]; total: number }>(
+        { queryKey: [object, "list"] },
+        (old) =>
+          old && {
+            ...old,
+            rows: old.rows.map((r) => (r.id === row.id ? { ...r, ...updated } : r)),
+          },
+      );
+      await queryClient.invalidateQueries({ queryKey: [object, "one", row.id] });
+      await queryClient.invalidateQueries({ queryKey: ["history", props.recordType, row.id] });
+      // Roll the Calls shows names and messages from records.
+      await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    };
+    await patchRow(value);
+    toast.success(`${field.label} saved`, {
+      undo: () =>
+        patchRow(before ?? "").then(
+          () => toast.success(`${field.label} put back`),
+          (e: Error) => toast.error(e.message),
+        ),
+    });
+  };
+
+  // Every column the picker offers: the page's own, then each field of the
+  // record that none of them shows (custom fields included), off until chosen.
+  const covered = new Set(props.columns.flatMap((c) => [c.field, c.key].filter(Boolean)));
+  const fieldColumns = tools?.customObject
+    ? fields
+        .filter((f) => !covered.has(f.name))
+        .map((field): Column<T> => {
+          const read = (row: T) => valueOf(row as unknown as Record<string, unknown>, field.name);
+          const text = (row: T) => {
+            const v = read(row);
+            const option = field.options?.find((o) => o.value === asText(v));
+            return option?.label ?? asText(v);
+          };
+          const numeric = field.kind === "number";
+          return {
+            key: field.name,
+            header: field.label,
+            field: field.name,
+            // Anything but ticks and links to other records sorts.
+            sort: field.kind === "multiselect" || /Id$/.test(field.name) ? undefined : field.name,
+            hidden: true,
+            cell: (row) => {
               const v = read(row);
-              const option = field.options?.find((o) => o.value === asText(v));
-              return option?.label ?? asText(v);
-            };
-            return {
-              key: field.name,
-              header: def.label,
-              sort: def.type === "multipicklist" ? undefined : field.name,
-              hidden: true,
-              cell: (row) => {
-                const v = read(row);
-                if (field.kind === "tel") return <PhoneLink value={asText(v)} copy={false} />;
-                return (field.format?.(v) ?? text(row)) || "—";
-              },
-              csv: (row) =>
-                def.type === "number" || def.type === "currency"
-                  ? (read(row) as number)
-                  : text(row),
-            };
-          })
-      : []),
-  ];
+              if (field.kind === "tel") return <PhoneLink value={asText(v)} copy={false} />;
+              if (field.kind === "textarea" || field.kind === "richtext") {
+                const plain = field.kind === "richtext" ? htmlToText(asText(v)) : asText(v);
+                return plain ? <span className="line-clamp-2 max-w-xs">{plain}</span> : "—";
+              }
+              return (field.format?.(v) ?? text(row)) || "—";
+            },
+            csv: (row) => (numeric ? (read(row) as number) : text(row)),
+          };
+        })
+    : [];
+  const allColumns: Column<T>[] = [...props.columns, ...fieldColumns];
   const shownIds = useMemo(() => {
     if (!prefs.columns) return allColumns.filter((c) => !c.hidden).map(columnId);
     // Columns added since the person chose theirs, and meant to be seen.
@@ -586,6 +637,40 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
     } finally {
       setExporting(false);
     }
+  };
+  const editableRow = (row: T) => can.canEdit(row.ownerId);
+  const renderCell = (c: Column<T>, row: T): ReactNode => {
+    if (c.opens && props.detailPath) {
+      return (
+        <Link
+          href={props.detailPath(row.id)}
+          className="font-medium text-primary hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {c.cell(row)}
+        </Link>
+      );
+    }
+    const field = props.inlineEdit && c.field ? fields.find((f) => f.name === c.field) : undefined;
+    if (!field) return c.cell(row);
+    return (
+      <ListCell
+        row={row as unknown as Record<string, unknown> & { id: string }}
+        field={field}
+        editable={editableRow(row)}
+        confirm={props.confirm ? (value) => props.confirm!(field.name, value, row) : undefined}
+        save={(value) =>
+          saveCell(
+            row,
+            field,
+            value,
+            valueOf(row as unknown as Record<string, unknown>, field.name),
+          )
+        }
+      >
+        {c.cell(row)}
+      </ListCell>
+    );
   };
   const sortBy = (c: Column<T>) => {
     if (!c.sort) return;
@@ -994,12 +1079,16 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                 {rows.map((row) => (
                   <TableRow
                     key={row.id}
-                    className="cursor-pointer"
-                    tabIndex={0}
-                    onClick={() => openRow(row)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") openRow(row);
-                    }}
+                    {...(props.inlineEdit
+                      ? {}
+                      : {
+                          className: "cursor-pointer",
+                          tabIndex: 0,
+                          onClick: () => openRow(row),
+                          onKeyDown: (e: React.KeyboardEvent) => {
+                            if (e.key === "Enter") openRow(row);
+                          },
+                        })}
                   >
                     {selectable && (
                       // Clicking the box must not also open the record.
@@ -1013,7 +1102,7 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                       </TableCell>
                     )}
                     {columns.map((c) => (
-                      <TableCell key={columnId(c)}>{c.cell(row)}</TableCell>
+                      <TableCell key={columnId(c)}>{renderCell(c, row)}</TableCell>
                     ))}
                   </TableRow>
                 ))}

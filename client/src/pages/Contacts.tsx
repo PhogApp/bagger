@@ -104,20 +104,30 @@ export function ContactsPage() {
     {
       header: "Name",
       sort: "name",
+      opens: true,
       csv: (c) => `${c.firstName} ${c.lastName}`,
-      cell: (c) => <span className="font-medium">{`${c.firstName} ${c.lastName}`}</span>,
+      cell: (c) => `${c.firstName} ${c.lastName}`,
     },
-    { header: "Title", sort: "title", cell: (c) => c.title ?? "—" },
-    { header: "Account", sort: "account", cell: (c) => accountName(c.accountId) },
+    { header: "Title", sort: "title", field: "title", cell: (c) => c.title ?? "—" },
     {
-      header: "Phone",
-      cell: (c) => <PhoneLink value={c.cellPhone ?? c.directPhone ?? c.hqPhone} copy={false} />,
-      csv: (c) => c.cellPhone ?? c.directPhone ?? c.hqPhone,
+      header: "Account",
+      sort: "account",
+      field: "accountId",
+      cell: (c) => accountName(c.accountId),
     },
-    { header: "Owner", sort: "owner", cell: (c) => nameOf(users, c.ownerId) },
+    {
+      key: "cellPhone",
+      header: "Cell Phone",
+      field: "cellPhone",
+      fresh: true,
+      csv: (c) => c.cellPhone,
+      cell: (c) => <PhoneLink value={c.cellPhone} copy={false} />,
+    },
+    { header: "Owner", sort: "owner", field: "ownerId", cell: (c) => nameOf(users, c.ownerId) },
     {
       header: "Status",
       sort: "status",
+      field: "status",
       csv: (c) => c.status,
       cell: (c) => (
         <StatusBadge status={c.status} color={statusColor(statuses, "contacts", c.status)} />
@@ -127,6 +137,7 @@ export function ContactsPage() {
     {
       header: "Email",
       sort: "email",
+      field: "email",
       hidden: true,
       cell: (c) => c.email,
     },
@@ -158,6 +169,8 @@ export function ContactsPage() {
       listTools={{ statusObject: "contacts", customObject: "contacts", sequences: "people" }}
       importKind="contacts"
       addFromTopBar
+      inlineEdit
+      confirm={(field, value) => confirmStatusChange(statuses, "contacts", field, value)}
       bulkActions={
         canUse(me, "sequences.bulk_enroll")
           ? (selected, clear) => (

@@ -53,14 +53,34 @@ export function AccountsPage() {
     {
       header: "Name",
       sort: "name",
+      opens: true,
       csv: (a) => a.name,
-      cell: (a) => <span className="font-medium">{a.name}</span>,
+      cell: (a) => a.name,
     },
-    { header: "Website", sort: "website", cell: (a) => a.website ?? "—" },
-    { header: "Owner", sort: "owner", cell: (a) => nameOf(users, a.ownerId) },
+    {
+      header: "Website",
+      sort: "website",
+      field: "website",
+      csv: (a) => a.website,
+      cell: (a) =>
+        a.website ? (
+          <a
+            href={a.website}
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary hover:underline"
+          >
+            {a.website.replace(/^https?:\/\/(www\.)?/, "")}
+          </a>
+        ) : (
+          "—"
+        ),
+    },
+    { header: "Owner", sort: "owner", field: "ownerId", cell: (a) => nameOf(users, a.ownerId) },
     {
       header: "Status",
       sort: "status",
+      field: "status",
       csv: (a) => a.status,
       cell: (a) => (
         <StatusBadge status={a.status} color={statusColor(statuses, "accounts", a.status)} />
@@ -108,6 +128,7 @@ export function AccountsPage() {
       listTools={{ statusObject: "accounts", customObject: "accounts", sequences: "accounts" }}
       importKind="accounts"
       addFromTopBar
+      inlineEdit
       describe={(a) => a.name}
     />
   );

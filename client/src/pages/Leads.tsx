@@ -69,20 +69,25 @@ export function LeadsPage() {
     {
       header: "Name",
       sort: "name",
+      opens: true,
       csv: (l) => `${l.firstName} ${l.lastName}`,
-      cell: (l) => <span className="font-medium">{`${l.firstName} ${l.lastName}`}</span>,
+      cell: (l) => `${l.firstName} ${l.lastName}`,
     },
-    { header: "Title", sort: "title", cell: (l) => l.title ?? "—" },
-    { header: "Company", sort: "company", cell: (l) => l.company ?? "—" },
+    { header: "Title", sort: "title", field: "title", cell: (l) => l.title ?? "—" },
+    { header: "Company", sort: "company", field: "company", cell: (l) => l.company ?? "—" },
     {
-      header: "Phone",
-      cell: (l) => <PhoneLink value={l.cellPhone ?? l.directPhone ?? l.hqPhone} copy={false} />,
-      csv: (l) => l.cellPhone ?? l.directPhone ?? l.hqPhone,
+      key: "cellPhone",
+      header: "Cell Phone",
+      field: "cellPhone",
+      fresh: true,
+      csv: (l) => l.cellPhone,
+      cell: (l) => <PhoneLink value={l.cellPhone} copy={false} />,
     },
-    { header: "Owner", sort: "owner", cell: (l) => nameOf(users, l.ownerId) },
+    { header: "Owner", sort: "owner", field: "ownerId", cell: (l) => nameOf(users, l.ownerId) },
     {
       header: "Status",
       sort: "status",
+      field: "status",
       csv: (l) => l.status,
       cell: (l) => (
         <StatusBadge status={l.status} color={statusColor(statuses, "leads", l.status)} />
@@ -93,6 +98,7 @@ export function LeadsPage() {
     {
       header: "Email",
       sort: "email",
+      field: "email",
       hidden: true,
       cell: (l) => l.email,
     },
@@ -124,6 +130,8 @@ export function LeadsPage() {
       listTools={{ statusObject: "leads", customObject: "leads", sequences: "people" }}
       importKind="leads"
       addFromTopBar
+      inlineEdit
+      confirm={(field, value) => confirmStatusChange(statuses, "leads", field, value)}
       bulkActions={
         canUse(me, "sequences.bulk_enroll")
           ? (selected, clear) => <BulkEnrollButton kind="leads" people={selected} onDone={clear} />

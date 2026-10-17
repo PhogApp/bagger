@@ -32,7 +32,6 @@ export interface Template {
 
 const TYPE_LABEL = { email: "Email", linkedin: "LinkedIn" } as const;
 
-
 function templateFields(users: OrgUser[] | undefined, type: string = "email"): Field[] {
   return [
     { name: "name", label: "Template Name", required: true },
@@ -90,7 +89,8 @@ export function TemplatesPage() {
       key: "name",
       header: "Template Name",
       sort: "name",
-      cell: (t) => <span className="font-medium">{t.name}</span>,
+      opens: true,
+      cell: (t) => t.name,
       csv: (t) => t.name,
     },
     { key: "subject", header: "Subject", sort: "subject", cell: (t) => t.subject ?? "—" },

@@ -142,26 +142,35 @@ export function OpportunitiesPage() {
     {
       header: "Opportunity",
       sort: "name",
+      opens: true,
       csv: (o) => o.name,
-      cell: (o) => <span className="font-medium">{o.name}</span>,
+      cell: (o) => o.name,
     },
-    { header: "Account", sort: "account", cell: (o) => accountName(o.accountId) },
+    {
+      header: "Account",
+      sort: "account",
+      field: "accountId",
+      cell: (o) => accountName(o.accountId),
+    },
     {
       header: "Amount",
       sort: "amount",
+      field: "amount",
       csv: (o) => (o.amount === null ? null : Number(o.amount)),
       cell: (o) => (o.amount === null ? "—" : formatMoney(Number(o.amount))),
     },
     {
       header: "Expected Close",
       sort: "closeDate",
+      field: "closeDate",
       csv: (o) => o.closeDate,
       cell: (o) => (o.closeDate ? formatDay(o.closeDate) : "—"),
     },
-    { header: "Owner", sort: "owner", cell: (o) => nameOf(users, o.ownerId) },
+    { header: "Owner", sort: "owner", field: "ownerId", cell: (o) => nameOf(users, o.ownerId) },
     {
       header: "Stage",
       sort: "status",
+      field: "status",
       csv: (o) => o.status,
       cell: (o) => (
         <StatusBadge status={o.status} color={statusColor(statuses, "opportunities", o.status)} />
@@ -334,6 +343,7 @@ export function OpportunitiesPage() {
       addFromTopBar
       renderList={view === "board" ? board : undefined}
       detailPath={(id) => `/opportunities/${id}`}
+      inlineEdit
       listTools={{
         statusObject: "opportunities",
         customObject: "opportunities",

@@ -1,4 +1,16 @@
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import type { AnyPgColumn, PgTableWithColumns } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
@@ -166,6 +178,15 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
     const by = options.dir === "desc" ? desc : asc;
     let expr: AnyPgColumn | SQL | undefined = cfg.sortable?.[options.sort];
     if (!expr && cfg.sequenceKind) expr = sequenceSorts(cfg.sequenceKind, t.id)[options.sort];
+    // Any of the record's own fields (lists can show every field as a column);
+    // text sorts without regard to case. Not ids, the custom bag or system columns.
+    if (!expr && !/Id$|^custom$|^orgId$|^deletedAt$/.test(options.sort)) {
+      const column = getTableColumns(t)[options.sort] as AnyPgColumn | undefined;
+      if (column) {
+        const text = column.dataType === "string" && column.columnType !== "PgEnumColumn";
+        expr = text ? sql`lower(${column})` : column;
+      }
+    }
     if (!expr && options.sort.startsWith("custom.") && cfg.customObject) {
       const key = options.sort.slice(7);
       const def = (await loadDefs(db, actor.orgId, cfg.customObject)).find((d) => d.key === key);

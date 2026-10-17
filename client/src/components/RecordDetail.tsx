@@ -73,7 +73,7 @@ const selectClass =
 const SPAN = { 2: "sm:col-span-2", 3: "sm:col-span-3", 6: "sm:col-span-6" } as const;
 
 /** How a stored value reads, by the kind of field. */
-function shown(field: Field, raw: unknown): ReactNode {
+export function shown(field: Field, raw: unknown): ReactNode {
   if (field.format) return field.format(raw);
   const value = asText(raw);
   if (value === "") return null;
@@ -116,30 +116,25 @@ function shown(field: Field, raw: unknown): ReactNode {
   }
 }
 
-function InlineField<T extends Row>(props: {
+/**
+ * Editing one field in place: the draft, Enter to save, Escape to cancel, a
+ * question first for changes with side effects, and the server's complaint
+ * shown under the box. Shared by record pages and list cells.
+ */
+export function useInlineEdit(props: {
   field: Field;
-  row: T;
-  editable: boolean;
-  display?: (row: T) => ReactNode;
+  stored: string;
   confirm?: (value: string) => string | null;
   save: (value: string) => Promise<void>;
 }) {
-  const { field, row } = props;
-  const stored = asText(valueOf(row, field.name));
+  const { field, stored } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(stored);
   const [error, setError] = useState<string | null>(null);
   const [asking, setAsking] = useState<{ question: string; value: string } | null>(null);
   const [saving, setSaving] = useState(false);
-  const box = useRef<HTMLInputElement & HTMLTextAreaElement & HTMLSelectElement>(null);
-  const id = `field-${field.name}`;
-
-  useEffect(() => {
-    if (editing) box.current?.focus();
-  }, [editing]);
 
   const start = () => {
-    if (!props.editable) return;
     setDraft(stored);
     setError(null);
     setEditing(true);
@@ -175,6 +170,26 @@ function InlineField<T extends Row>(props: {
       setSaving(false);
     }
   };
+  return { field, editing, draft, setDraft, error, asking, saving, start, cancel, commit };
+}
+
+export type InlineEdit = ReturnType<typeof useInlineEdit>;
+
+/** The box (or ticks, or editor) for a field being edited, with its question and error. */
+export function FieldEditor({
+  edit,
+  id,
+  compact = false,
+}: {
+  edit: InlineEdit;
+  id: string;
+  compact?: boolean;
+}) {
+  const { field, draft, setDraft, saving, asking, error, commit, cancel } = edit;
+  const box = useRef<HTMLInputElement & HTMLTextAreaElement & HTMLSelectElement>(null);
+  useEffect(() => {
+    box.current?.focus();
+  }, []);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -190,163 +205,183 @@ function InlineField<T extends Row>(props: {
     }
   };
 
+  return (
+    <div className={cn("space-y-1", !compact && "mt-1")}>
+      {field.kind === "multiselect" ? (
+        <div
+          onBlur={(e) => {
+            // Save once focus leaves the whole group of ticks.
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) void commit(draft);
+          }}
+          onKeyDown={onKey}
+        >
+          <MultiSelect
+            id={id}
+            options={field.options ?? []}
+            value={draft}
+            disabled={saving}
+            onChange={setDraft}
+          />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={saving} onClick={() => void commit(draft)}>
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancel}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : field.kind === "richtext" ? (
+        <div
+          onBlur={(e) => {
+            // Save once focus leaves the editor and its toolbar (not for its link window).
+            const to = e.relatedTarget as HTMLElement | null;
+            if (to?.closest("[data-keep-editing]")) return;
+            if (!e.currentTarget.contains(to) && !asking) void commit(draft);
+          }}
+          className="space-y-2"
+        >
+          <RichTextEditor
+            id={id}
+            value={draft}
+            disabled={saving}
+            autoFocus
+            onChange={setDraft}
+            onSubmit={() => void commit(draft)}
+            onCancel={cancel}
+          />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={saving} onClick={() => void commit(draft)}>
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={cancel}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : field.kind === "select" ? (
+        <select
+          id={id}
+          ref={box}
+          className={selectClass}
+          value={draft}
+          disabled={saving}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            void commit(e.target.value);
+          }}
+          onBlur={() => !asking && cancel()}
+          onKeyDown={onKey}
+        >
+          {!field.required && <option value="">—</option>}
+          {field.options?.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      ) : field.kind === "plaintext" ? (
+        <PlainTextEditor
+          id={id}
+          autoFocus
+          rows={field.rows ?? 6}
+          limit={field.maxLength}
+          value={draft}
+          disabled={saving}
+          onChange={setDraft}
+          onBlur={() => !asking && void commit(draft)}
+          onKeyDown={onKey}
+        />
+      ) : field.kind === "textarea" ? (
+        <Textarea
+          id={id}
+          ref={box}
+          rows={field.rows ?? 4}
+          value={draft}
+          disabled={saving}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => !asking && void commit(draft)}
+          onKeyDown={onKey}
+        />
+      ) : (
+        <Input
+          id={id}
+          ref={box}
+          className="h-9"
+          type={
+            field.kind === "date" || field.kind === "email" || field.kind === "tel"
+              ? field.kind
+              : "text"
+          }
+          inputMode={field.kind === "url" ? "url" : field.kind === "number" ? "decimal" : undefined}
+          placeholder={field.placeholder}
+          value={draft}
+          disabled={saving}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => !asking && void commit(draft)}
+          onKeyDown={onKey}
+        />
+      )}
+      {field.help && !compact && <p className="text-xs text-muted-foreground">{field.help}</p>}
+      {asking && (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900"
+        >
+          <p>{asking.question}</p>
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" disabled={saving} onClick={() => void commit(asking.value, true)}>
+              Yes, change it
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancel}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function InlineField<T extends Row>(props: {
+  field: Field;
+  row: T;
+  editable: boolean;
+  display?: (row: T) => ReactNode;
+  confirm?: (value: string) => string | null;
+  save: (value: string) => Promise<void>;
+}) {
+  const { field, row } = props;
+  const edit = useInlineEdit({
+    field,
+    stored: asText(valueOf(row, field.name)),
+    confirm: props.confirm,
+    save: props.save,
+  });
+  const id = `field-${field.name}`;
+  const start = () => props.editable && edit.start();
   const reading = props.display?.(row) ?? shown(field, valueOf(row, field.name));
 
   return (
     <div className={cn("col-span-6 min-w-0", SPAN[field.span ?? 3])}>
       <label
-        htmlFor={editing ? id : undefined}
+        htmlFor={edit.editing ? id : undefined}
         className="text-xs font-medium text-muted-foreground"
       >
         {field.label}
       </label>
-      {editing ? (
-        <div className="mt-1 space-y-1">
-          {field.kind === "multiselect" ? (
-            <div
-              onBlur={(e) => {
-                // Save once focus leaves the whole group of ticks.
-                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) void commit(draft);
-              }}
-              onKeyDown={onKey}
-            >
-              <MultiSelect
-                id={id}
-                options={field.options ?? []}
-                value={draft}
-                disabled={saving}
-                onChange={setDraft}
-              />
-              <div className="flex gap-2">
-                <Button size="sm" disabled={saving} onClick={() => void commit(draft)}>
-                  Save
-                </Button>
-                <Button size="sm" variant="ghost" onClick={cancel}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : field.kind === "richtext" ? (
-            <div
-              onBlur={(e) => {
-                // Save once focus leaves the editor and its toolbar (not for its link window).
-                const to = e.relatedTarget as HTMLElement | null;
-                if (to?.closest("[data-keep-editing]")) return;
-                if (!e.currentTarget.contains(to) && !asking) void commit(draft);
-              }}
-              className="space-y-2"
-            >
-              <RichTextEditor
-                id={id}
-                value={draft}
-                disabled={saving}
-                autoFocus
-                onChange={setDraft}
-                onSubmit={() => void commit(draft)}
-                onCancel={cancel}
-              />
-              <div className="flex gap-2">
-                <Button size="sm" disabled={saving} onClick={() => void commit(draft)}>
-                  Save
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={cancel}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : field.kind === "select" ? (
-            <select
-              id={id}
-              ref={box}
-              className={selectClass}
-              value={draft}
-              disabled={saving}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                void commit(e.target.value);
-              }}
-              onBlur={() => !asking && cancel()}
-              onKeyDown={onKey}
-            >
-              {!field.required && <option value="">—</option>}
-              {field.options?.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          ) : field.kind === "plaintext" ? (
-            <PlainTextEditor
-              id={id}
-              autoFocus
-              rows={field.rows ?? 6}
-              limit={field.maxLength}
-              value={draft}
-              disabled={saving}
-              onChange={setDraft}
-              onBlur={() => !asking && void commit(draft)}
-              onKeyDown={onKey}
-            />
-          ) : field.kind === "textarea" ? (
-            <Textarea
-              id={id}
-              ref={box}
-              rows={field.rows ?? 4}
-              value={draft}
-              disabled={saving}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => !asking && void commit(draft)}
-              onKeyDown={onKey}
-            />
-          ) : (
-            <Input
-              id={id}
-              ref={box}
-              className="h-9"
-              type={
-                field.kind === "date" || field.kind === "email" || field.kind === "tel"
-                  ? field.kind
-                  : "text"
-              }
-              inputMode={
-                field.kind === "url" ? "url" : field.kind === "number" ? "decimal" : undefined
-              }
-              placeholder={field.placeholder}
-              value={draft}
-              disabled={saving}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => !asking && void commit(draft)}
-              onKeyDown={onKey}
-            />
-          )}
-          {field.help && <p className="text-xs text-muted-foreground">{field.help}</p>}
-          {asking && (
-            <div
-              role="alert"
-              className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900"
-            >
-              <p>{asking.question}</p>
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" disabled={saving} onClick={() => void commit(asking.value, true)}>
-                  Yes, change it
-                </Button>
-                <Button size="sm" variant="ghost" onClick={cancel}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-          {error && (
-            <p role="alert" className="text-xs text-destructive">
-              {error}
-            </p>
-          )}
-        </div>
+      {edit.editing ? (
+        <FieldEditor edit={edit} id={id} />
       ) : props.editable ? (
         <div
           role="button"
