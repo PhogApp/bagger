@@ -23,6 +23,8 @@ import { cn } from "@/lib/utils";
 export interface ListPrefs {
   /** Column ids in order; null means the list's standard columns. */
   columns: string[] | null;
+  /** Every column the list had when the person chose theirs, so new ones can be shown. */
+  seen?: string[];
   sort: string | null;
   dir: "asc" | "desc";
   /** "" for everyone's, "me", or a user id. */
@@ -32,6 +34,12 @@ export interface ListPrefs {
   statuses: string[];
   /** Activity types, on the Activities list. */
   types: string[];
+  /** Leads, contacts, accounts: "" any, "in", "out" (not in one now), "never". */
+  seq: "" | "in" | "out" | "never";
+  /** How the last sequence ended. */
+  outcomes: string[];
+  /** The last sequence ended at least this many days ago. */
+  endedDays: number | null;
   pageSize: number;
 }
 
@@ -42,6 +50,9 @@ const DEFAULT_PREFS: ListPrefs = {
   owner: "me",
   statuses: [],
   types: [],
+  seq: "",
+  outcomes: [],
+  endedDays: null,
   pageSize: 50,
 };
 
@@ -282,6 +293,124 @@ export function StatusFilter(props: {
           type="button"
           className="mt-1 px-1 text-xs text-primary hover:underline"
           onClick={() => props.onChange([])}
+        >
+          Clear
+        </button>
+      )}
+    </Popover>
+  );
+}
+
+/** The sequence filters, in their own panel. */
+export interface SequenceFilterValue {
+  seq: ListPrefs["seq"];
+  outcomes: string[];
+  endedDays: number | null;
+}
+
+export function sequenceFilterCount(v: SequenceFilterValue): number {
+  return (v.seq ? 1 : 0) + (v.outcomes.length ? 1 : 0) + (v.endedDays !== null ? 1 : 0);
+}
+
+export function SequenceFilter(props: {
+  value: SequenceFilterValue;
+  outcomes: { value: string; label: string }[];
+  /** "people" on Leads and Contacts; "accounts" words it for the people at an account. */
+  about: "people" | "accounts";
+  onChange: (patch: Partial<SequenceFilterValue>) => void;
+}) {
+  const { value } = props;
+  const n = sequenceFilterCount(value);
+  const states: { value: ListPrefs["seq"]; label: string }[] =
+    props.about === "accounts"
+      ? [
+          { value: "", label: "Any" },
+          { value: "in", label: "Someone is in a sequence" },
+          { value: "out", label: "Nobody is in a sequence" },
+          { value: "never", label: "Nobody has ever been in one" },
+        ]
+      : [
+          { value: "", label: "Any" },
+          { value: "in", label: "In a sequence (paused too)" },
+          { value: "out", label: "Not in a sequence" },
+          { value: "never", label: "Never been in one" },
+        ];
+  const [days, setDays] = useState(value.endedDays === null ? "" : String(value.endedDays));
+  useEffect(
+    () => setDays(value.endedDays === null ? "" : String(value.endedDays)),
+    [value.endedDays],
+  );
+  const commitDays = (text: string) => {
+    const d = text.trim() === "" ? null : Math.max(0, Math.min(3650, Math.floor(Number(text))));
+    if (d === null || Number.isFinite(d)) props.onChange({ endedDays: d });
+  };
+  return (
+    <Popover
+      ariaLabel="Filter by sequence"
+      label={n === 0 ? "Any sequence" : `Sequence (${n})`}
+      width="w-80"
+    >
+      <fieldset className="space-y-0.5">
+        <legend className="px-1 pb-1 text-xs font-semibold text-muted-foreground">Now</legend>
+        {states.map((st) => (
+          <label
+            key={st.value}
+            className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted/60"
+          >
+            <input
+              type="radio"
+              name="seq-state"
+              checked={value.seq === st.value}
+              onChange={() => props.onChange({ seq: st.value })}
+            />
+            {st.label}
+          </label>
+        ))}
+      </fieldset>
+      <fieldset className="mt-2 space-y-0.5 border-t pt-2">
+        <legend className="px-1 pb-1 pt-2 text-xs font-semibold text-muted-foreground">
+          Last sequence ended
+        </legend>
+        {props.outcomes.map((o) => (
+          <label
+            key={o.value}
+            className="flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted/60"
+          >
+            <input
+              type="checkbox"
+              checked={value.outcomes.includes(o.value)}
+              onChange={(e) =>
+                props.onChange({
+                  outcomes: e.target.checked
+                    ? [...value.outcomes, o.value]
+                    : value.outcomes.filter((x) => x !== o.value),
+                })
+              }
+            />
+            {o.label}
+          </label>
+        ))}
+        <label className="flex items-center gap-2 px-1 pt-2 text-sm">
+          At least
+          <input
+            type="number"
+            min={0}
+            inputMode="numeric"
+            aria-label="Days since the last sequence ended"
+            className="h-8 w-16 rounded-md border border-input bg-background px-2 text-sm"
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            onBlur={() => commitDays(days)}
+            onKeyDown={(e) => e.key === "Enter" && commitDays(days)}
+          />
+          days ago
+        </label>
+      </fieldset>
+      {n > 0 && (
+        <button
+          type="button"
+          className="mt-2 px-1 text-xs text-primary hover:underline"
+          onClick={() => props.onChange({ seq: "", outcomes: [], endedDays: null })}
         >
           Clear
         </button>

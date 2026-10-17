@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PlainTextEditor, RichTextEditor } from "@/components/RichTextEditor";
 import { PhoneLink } from "@/components/PhoneLink";
 import { ImportDialog, type ImportKind } from "@/components/ImportRecords";
+import { OUTCOME_ORDER, OUTCOMES } from "@/components/SequenceBits";
 import {
   BulkChanges,
   BulkDeleteDialog,
@@ -34,6 +35,8 @@ import {
   ExportMenu,
   MoreMenu,
   OwnerFilter,
+  SequenceFilter,
+  sequenceFilterCount,
   type MenuItem,
   Pager,
   StatusFilter,
@@ -175,6 +178,12 @@ export interface Column<T> {
   csv?: (row: T) => string | number | null | undefined;
   /** Offered in the column picker but not shown until chosen. */
   hidden?: boolean;
+  /**
+   * New to the list: shown even to people who had already chosen their
+   * columns, until they choose again. (The picker remembers which columns
+   * existed when they chose.)
+   */
+  fresh?: boolean;
 }
 
 const columnId = <T,>(c: Column<T>) => c.key ?? c.header;
@@ -218,6 +227,11 @@ export interface RecordPageProps<T extends BaseRecord> {
     customObject?: LayoutObject;
     /** What the status is called on this record type, e.g. "Stage". */
     statusLabel?: string;
+    /**
+     * Rows carry a sequence summary and the list can be filtered by sequence:
+     * "people" for leads and contacts, "accounts" for the people at an account.
+     */
+    sequences?: "people" | "accounts";
   };
   /** Draws the rows some other way than the table, e.g. a board. Call `open` to edit one. */
   renderList?: (rows: T[], open: (row: T) => void) => ReactNode;
@@ -463,10 +477,31 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
   for (const st of prefs.statuses) {
     if (statusOptions.some((o) => o.name === st)) listParams.append("status", st);
   }
+  if (tools?.sequences) {
+    listParams.set("withSequences", "1");
+    if (prefs.seq) listParams.set("seq", prefs.seq);
+    for (const o of prefs.outcomes) listParams.append("outcome", o);
+    if (prefs.endedDays !== null) listParams.set("endedDays", String(prefs.endedDays));
+  }
+  const seqFilters = tools?.sequences
+    ? sequenceFilterCount({ seq: prefs.seq, outcomes: prefs.outcomes, endedDays: prefs.endedDays })
+    : 0;
+  const filtered =
+    (prefs.owner && prefs.owner !== "me") || prefs.statuses.length > 0 || seqFilters > 0;
   const query = listParams.toString();
   useEffect(
     () => setOffset(0),
-    [q, prefs.sort, prefs.dir, prefs.owner, prefs.statuses.join("|"), prefs.pageSize],
+    [
+      q,
+      prefs.sort,
+      prefs.dir,
+      prefs.owner,
+      prefs.statuses.join("|"),
+      prefs.seq,
+      prefs.outcomes.join("|"),
+      prefs.endedDays,
+      prefs.pageSize,
+    ],
   );
 
   const list = useQuery({
@@ -507,7 +542,14 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
           })
       : []),
   ];
-  const shownIds = prefs.columns ?? allColumns.filter((c) => !c.hidden).map(columnId);
+  const shownIds = useMemo(() => {
+    if (!prefs.columns) return allColumns.filter((c) => !c.hidden).map(columnId);
+    // Columns added since the person chose theirs, and meant to be seen.
+    const known = new Set(prefs.seen ?? prefs.columns);
+    const added = allColumns.filter((c) => c.fresh && !c.hidden && !known.has(columnId(c)));
+    return [...prefs.columns, ...added.map(columnId)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.columns, prefs.seen, allColumns.map(columnId).join("|")]);
   const columns = shownIds
     .map((id) => allColumns.find((c) => columnId(c) === id))
     .filter((c): c is Column<T> => Boolean(c));
@@ -811,12 +853,28 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                     onChange={(st) => setPrefs({ statuses: st })}
                   />
                 )}
-                {(prefs.owner !== "me" || prefs.statuses.length > 0) && (
+                {tools.sequences && (
+                  <SequenceFilter
+                    about={tools.sequences}
+                    outcomes={OUTCOME_ORDER.map((o) => ({ value: o, label: OUTCOMES[o].label }))}
+                    value={{ seq: prefs.seq, outcomes: prefs.outcomes, endedDays: prefs.endedDays }}
+                    onChange={(patch) => setPrefs(patch)}
+                  />
+                )}
+                {(prefs.owner !== "me" || prefs.statuses.length > 0 || seqFilters > 0) && (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="h-9"
-                    onClick={() => setPrefs({ owner: "me", statuses: [] })}
+                    onClick={() =>
+                      setPrefs({
+                        owner: "me",
+                        statuses: [],
+                        seq: "",
+                        outcomes: [],
+                        endedDays: null,
+                      })
+                    }
                   >
                     Clear filters
                   </Button>
@@ -826,7 +884,9 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
                   <ColumnPicker
                     available={allColumns.map((c) => ({ id: columnId(c), label: c.header }))}
                     shown={shownIds}
-                    onChange={(ids) => setPrefs({ columns: ids })}
+                    onChange={(ids) =>
+                      setPrefs({ columns: ids, seen: allColumns.map((c) => columnId(c)) })
+                    }
                   />
                 )}
                 {canExport && (
@@ -866,21 +926,19 @@ export function RecordPage<T extends BaseRecord>(props: RecordPageProps<T>) {
             <p className="p-8 text-center text-sm text-muted-foreground">Loading…</p>
           ) : rows.length === 0 ? (
             <p className="p-8 text-center text-sm text-muted-foreground">
-              {q || (prefs.owner && prefs.owner !== "me") || prefs.statuses.length
+              {q || filtered
                 ? `No ${props.title.toLowerCase()} match${q ? ` “${q}”` : ""}${
-                    (prefs.owner && prefs.owner !== "me") || prefs.statuses.length
-                      ? " these filters"
-                      : ""
+                    filtered ? " these filters" : ""
                   }.`
                 : prefs.owner === "me" && tools
                   ? `None of yours yet. Choose "Everyone's" to see the rest of your team's ${props.title.toLowerCase()}.`
-                : q
-                  ? `No ${props.title.toLowerCase()} match “${q}”.`
-                  : `No ${props.title.toLowerCase()} yet.${
-                      can.canCreate
-                        ? ` Add your first ${singular.toLowerCase()} to get started.`
-                        : ""
-                    }`}
+                  : q
+                    ? `No ${props.title.toLowerCase()} match “${q}”.`
+                    : `No ${props.title.toLowerCase()} yet.${
+                        can.canCreate
+                          ? ` Add your first ${singular.toLowerCase()} to get started.`
+                          : ""
+                      }`}
             </p>
           ) : props.renderList ? (
             props.renderList(rows, openRow)

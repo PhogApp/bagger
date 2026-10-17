@@ -22,6 +22,13 @@ import type { CustomFieldObject, StatusObject } from "../../shared/schema";
 import { loadDefs, settleCustom } from "../fields/service";
 import { defaultStatus, resolveStatus } from "../statuses/service";
 import { DuplicateError, NotFoundError, ValidationError, type DuplicateMatch } from "../errors";
+import {
+  sequenceSorts,
+  sequenceWhere,
+  summarize,
+  type SequenceFilter,
+  type SequenceKind,
+} from "../sequences/summary";
 
 /**
  * The single write path for ordinary records (leads, contacts, accounts,
@@ -69,6 +76,11 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
   duplicates?: (tx: Db, actor: Actor, values: z.infer<TSchema>) => Promise<DuplicateMatch[]>;
   /** Rows the list leaves out, e.g. leads that became contacts. */
   hidden?: SQL;
+  /**
+   * Set for records that go through sequences (or, for accounts, whose people
+   * do): lists can be filtered and sorted by sequence, and show a summary.
+   */
+  sequenceKind?: SequenceKind;
   /** A reason this row can no longer be changed or deleted, or null. */
   frozen?: (row: TRow) => string | null;
   afterCreate?: (tx: Db, actor: Actor, row: TRow) => Promise<void>;
@@ -79,7 +91,9 @@ export interface RecordConfig<TRow extends BaseRow, TSchema extends z.ZodObject>
 const bulkInput = z.object({
   ids: z.array(z.uuid()).min(1).max(1000),
   action: z.enum(["update", "delete"]),
-  patch: z.object({ ownerId: z.uuid().optional(), status: z.string().min(1).optional() }).optional(),
+  patch: z
+    .object({ ownerId: z.uuid().optional(), status: z.string().min(1).optional() })
+    .optional(),
 });
 
 export interface CreateOptions {
@@ -99,6 +113,10 @@ export interface ListOptions {
   statuses?: string[];
   /** Exact matches on the columns named in the config's `filters`, e.g. { accountId }. */
   where?: Record<string, string | undefined>;
+  /** Only records in, out of, or past a sequence in a given way. */
+  sequence?: SequenceFilter;
+  /** Add a `sequences` summary to each row (for the list screens). */
+  withSequences?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -147,6 +165,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
     if (!options.sort) return usual;
     const by = options.dir === "desc" ? desc : asc;
     let expr: AnyPgColumn | SQL | undefined = cfg.sortable?.[options.sort];
+    if (!expr && cfg.sequenceKind) expr = sequenceSorts(cfg.sequenceKind, t.id)[options.sort];
     if (!expr && options.sort.startsWith("custom.") && cfg.customObject) {
       const key = options.sort.slice(7);
       const def = (await loadDefs(db, actor.orgId, cfg.customObject)).find((d) => d.key === key);
@@ -179,6 +198,10 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         where.push(eq(column, value));
       }
       if (options.owners?.length) where.push(inArray(t.ownerId, options.owners));
+      if (options.sequence) {
+        if (!cfg.sequenceKind) throw new ValidationError(`${cfg.object} aren't in sequences`);
+        where.push(...sequenceWhere(cfg.sequenceKind, actor, t.id, options.sequence));
+      }
       if (options.statuses?.length) {
         if (!cfg.statusObject) throw new ValidationError(`${cfg.object} have no status`);
         where.push(inArray(t.status, options.statuses));
@@ -204,6 +227,14 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
         .orderBy(...order)
         .limit(Math.min(options.limit ?? 100, 500))
         .offset(options.offset ?? 0);
+      if (options.withSequences && cfg.sequenceKind) {
+        const ids = rows.map((r) => r.id as string);
+        const summaries = await summarize(db, actor, cfg.sequenceKind, ids);
+        return rows.map((r) => ({
+          ...r,
+          sequences: summaries.get(r.id as string),
+        })) as unknown as TRow[];
+      }
       return rows as TRow[];
     },
 
@@ -234,7 +265,8 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
           else await this.update(db, actor, id, input.patch);
           done += 1;
         } catch (e) {
-          if (e instanceof PermissionError) skipped.push({ id, reason: "Your role can't change this record" });
+          if (e instanceof PermissionError)
+            skipped.push({ id, reason: "Your role can't change this record" });
           else if (e instanceof NotFoundError) skipped.push({ id, reason: "No longer exists" });
           else if (e instanceof ValidationError) skipped.push({ id, reason: e.message });
           else throw e;
@@ -257,12 +289,7 @@ export function recordService<TRow extends BaseRow, TSchema extends z.ZodObject>
       return row;
     },
 
-    async create(
-      db: Db,
-      actor: Actor,
-      raw: unknown,
-      options: CreateOptions = {},
-    ): Promise<TRow> {
+    async create(db: Db, actor: Actor, raw: unknown, options: CreateOptions = {}): Promise<TRow> {
       if (!canCreate(actor.permissions, cfg.object)) {
         throw new PermissionError(`${cfg.object}.create`);
       }

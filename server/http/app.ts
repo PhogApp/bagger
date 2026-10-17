@@ -25,6 +25,7 @@ import { conversionPreview, convertLead } from "../records/convert";
 import { IMPORT_KINDS, importRecords } from "../records/import";
 import type { ListOptions } from "../records/service";
 import { SequenceError } from "../sequences/engine";
+import { END_REASONS, sequenceHistory } from "../sequences/summary";
 import * as seq from "../sequences/service";
 import * as organization from "../orgs/organization";
 import * as activityService from "../activities/service";
@@ -77,6 +78,14 @@ const listQuery = z.object({
   status: z.union([z.string(), z.array(z.string())]).optional(),
   /** Answer { rows, total } instead of just the rows. */
   withTotal: z.literal("1").optional(),
+  /** Leads, contacts, accounts: in a sequence now, not in one, or never in one. */
+  seq: z.enum(["in", "out", "never"]).optional(),
+  /** How the last sequence ended; repeat for several. */
+  outcome: z.union([z.enum(END_REASONS), z.array(z.enum(END_REASONS))]).optional(),
+  /** The last sequence ended at least this many days ago. */
+  endedDays: z.coerce.number().int().min(0).max(3650).optional(),
+  /** Add a sequence summary to each row. */
+  withSequences: z.literal("1").optional(),
 });
 
 function actorOf(req: Request): Actor {
@@ -110,14 +119,38 @@ interface CrudService {
 function crud(router: Router, path: string, db: Db, service: CrudService) {
   router.get(path, (async (req, res) => {
     const actor = actorOf(req);
-    const { accountId, leadId, contactId, opportunityId, owner, status, withTotal, ...options } =
-      listQuery.parse(req.query);
+    const {
+      accountId,
+      leadId,
+      contactId,
+      opportunityId,
+      owner,
+      status,
+      withTotal,
+      seq: seqState,
+      outcome,
+      endedDays,
+      withSequences,
+      ...options
+    } = listQuery.parse(req.query);
     const owners = owner
       ?.split(",")
       .filter(Boolean)
       .map((o) => (o === "me" ? actor.userId : z.uuid().parse(o)));
     const statuses = status === undefined ? undefined : [status].flat();
-    const full = { ...options, owners, statuses, where: { accountId, leadId, contactId, opportunityId } };
+    const outcomes = outcome === undefined ? undefined : [outcome].flat();
+    const sequence =
+      seqState || outcomes || endedDays !== undefined
+        ? { state: seqState, outcomes, endedDays }
+        : undefined;
+    const full = {
+      ...options,
+      owners,
+      statuses,
+      sequence,
+      withSequences: Boolean(withSequences),
+      where: { accountId, leadId, contactId, opportunityId },
+    };
     const rows = await service.list(db, actor, full);
     res.json(withTotal ? { rows, total: await service.count(db, actor, full) } : rows);
   }) satisfies Handler);
@@ -214,7 +247,8 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
     if (event.type === "organizationMembership.deleted") {
       const clerkUserId = event.data.public_user_data?.user_id;
       const clerkOrgId = event.data.organization?.id;
-      if (clerkUserId && clerkOrgId) ended = await people.removedInClerk(db, { clerkUserId, clerkOrgId });
+      if (clerkUserId && clerkOrgId)
+        ended = await people.removedInClerk(db, { clerkUserId, clerkOrgId });
     } else if (event.type === "user.deleted" && event.data.id) {
       ended = await people.removedInClerk(db, { clerkUserId: event.data.id });
     }
@@ -302,7 +336,9 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   });
   api.get("/staff/organizations/:id", async (req, res) => {
     await staffOf(req);
-    res.json(await staffService.getOrganization(db, String(req.params.id), Boolean(options.billing)));
+    res.json(
+      await staffService.getOrganization(db, String(req.params.id), Boolean(options.billing)),
+    );
   });
   api.post("/staff/organizations/:id/owner", async (req, res) => {
     const staff = await staffOf(req);
@@ -396,14 +432,23 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   });
 
   // ---- integrations (Admin › Integrations)
-  const integrationsConfig: IntegrationsConfig = options.integrations ?? { key: null, providers: {} };
+  const integrationsConfig: IntegrationsConfig = options.integrations ?? {
+    key: null,
+    providers: {},
+  };
   const originOf = (req: Request) => `${req.protocol}://${req.get("host")}`;
   api.get("/integrations", async (req, res) => {
     res.json(await integrations.listIntegrations(db, actorOf(req), integrationsConfig));
   });
   api.post("/integrations/callback", async (req, res) => {
     res.json(
-      await integrations.finishConnect(db, actorOf(req), integrationsConfig, req.body, originOf(req)),
+      await integrations.finishConnect(
+        db,
+        actorOf(req),
+        integrationsConfig,
+        req.body,
+        originOf(req),
+      ),
     );
   });
   api.post("/integrations/:provider/connect", async (req, res) => {
@@ -583,6 +628,18 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.post("/leads/:id/convert", async (req, res) => {
     res.json(await convertLead(db, actorOf(req), id(req), req.body));
   });
+  // Every sequence a lead or contact has been through, or an account's people.
+  for (const [path, kind, service] of [
+    ["leads", "leads", leadService],
+    ["contacts", "contacts", contactService],
+    ["accounts", "accounts", accountService],
+  ] as const) {
+    api.get(`/${path}/:id/sequences`, async (req, res) => {
+      const actor = actorOf(req);
+      await service.get(db, actor, id(req));
+      res.json(await sequenceHistory(db, actor, kind, id(req)));
+    });
+  }
   crud(api, "/leads", db, leadService);
   crud(api, "/accounts", db, accountService);
   crud(api, "/contacts", db, contactService);
@@ -616,6 +673,10 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
   api.post("/sequences/:id/enrollments", async (req, res) => {
     res.status(201).json(await seq.enrollPerson(db, actorOf(req), id(req), req.body));
   });
+  // Who among these has been through the sequence before, to warn first.
+  api.post("/sequences/:id/enrollments/check", async (req, res) => {
+    res.json(await seq.checkRepeats(db, actorOf(req), id(req), req.body));
+  });
   api.post("/sequences/:id/enrollments/bulk", async (req, res) => {
     res.json(await seq.bulkEnroll(db, actorOf(req), id(req), req.body));
   });
@@ -634,7 +695,10 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
 
   // ---- Roll the Calls
   api.get("/tasks/due", async (req, res) => {
-    const owner = z.union([z.uuid(), z.literal("all")]).optional().parse(req.query.owner);
+    const owner = z
+      .union([z.uuid(), z.literal("all")])
+      .optional()
+      .parse(req.query.owner);
     res.json(await seq.dueTasks(db, actorOf(req), { ownerId: owner }));
   });
   api.get("/tasks/:id", async (req, res) => {
@@ -695,7 +759,9 @@ export function createApp(db: Db, authenticate: Authenticator, options: AppOptio
       .parse(req.body);
     // Downloading every row is an export; showing the first thousand is not.
     if (wantsAll) requireTool(actorOf(req).permissions, "data.export_lists");
-    res.json(await builder.runReport(db, actorOf(req), definition, { limit: wantsAll ? 50000 : 1000 }));
+    res.json(
+      await builder.runReport(db, actorOf(req), definition, { limit: wantsAll ? 50000 : 1000 }),
+    );
   });
   api.get("/reports/saved", async (req, res) => {
     res.json(await builder.listSaved(db, actorOf(req)));

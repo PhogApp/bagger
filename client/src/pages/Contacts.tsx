@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { canUse, useApi, useMe, useOrgUsers, useStatuses } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { PhoneLink } from "@/components/PhoneLink";
+import { SequenceHistory, sequenceColumns } from "@/components/SequenceBits";
 import type { Account } from "./Accounts";
 import {
   confirmStatusChange,
@@ -122,7 +123,7 @@ export function ContactsPage() {
         <StatusBadge status={c.status} color={statusColor(statuses, "contacts", c.status)} />
       ),
     },
-
+    ...sequenceColumns<Contact>(),
     {
       header: "Email",
       sort: "email",
@@ -154,7 +155,7 @@ export function ContactsPage() {
       columns={columns}
       defaults={{ status: defaultStatus(statuses, "contacts"), ownerId: me?.user.id ?? "" }}
       detailPath={(id) => `/contacts/${id}`}
-      listTools={{ statusObject: "contacts", customObject: "contacts" }}
+      listTools={{ statusObject: "contacts", customObject: "contacts", sequences: "people" }}
       importKind="contacts"
       addFromTopBar
       bulkActions={
@@ -208,6 +209,7 @@ export function ContactDetailPage({ params }: { params: { id: string } }) {
         ) : null
       }
       confirm={(field, value) => confirmStatusChange(statuses, "contacts", field, value)}
+      below={(c) => <SequenceHistory kind="contacts" id={c.id} />}
       activity={(c) => ({ contactId: c.id })}
     />
   );

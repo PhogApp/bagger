@@ -13,17 +13,12 @@ import {
 } from "../../shared/schema";
 import { diffFields, recordLifecycle, recordUpdate } from "../audit/history";
 import { isMember, type Actor } from "../auth/actor";
-import {
-  canUse,
-  PermissionError,
-  requireRecord,
-  requireTool,
-  scopeFor,
-} from "../auth/permissions";
+import { canUse, PermissionError, requireRecord, requireTool, scopeFor } from "../auth/permissions";
 import type { Db } from "../db/types";
 import { NotFoundError, ValidationError } from "../errors";
 import * as engine from "./engine";
 import { messageFor, stepKind } from "./html";
+import { previousRuns } from "./summary";
 import { linkedinTooLong } from "../../shared/linkedin";
 
 /**
@@ -303,7 +298,10 @@ export async function reorderSteps(
     }
     const before = current.map((c) => c.id).join(",");
     for (const [i, id] of stepIds.entries()) {
-      await tx.update(sequenceSteps).set({ position: i + 1 }).where(eq(sequenceSteps.id, id));
+      await tx
+        .update(sequenceSteps)
+        .set({ position: i + 1 })
+        .where(eq(sequenceSteps.id, id));
     }
     if (before !== stepIds.join(",")) {
       await recordUpdate(tx, actor, "sequence", sequenceId, [
@@ -392,6 +390,18 @@ export async function bulkEnroll(db: Db, actor: Actor, sequenceId: string, raw: 
     }
   }
   return { enrolled, skipped };
+}
+
+/**
+ * Of the people about to be enrolled, those who have been through this
+ * sequence before. Only a warning: enrolling them again is allowed.
+ */
+export async function checkRepeats(db: Db, actor: Actor, sequenceId: string, raw: unknown) {
+  requireTool(actor.permissions, "sequences.enroll");
+  const input = bulkEnrollInput.parse(raw);
+  const sequence = await loadSequence(db, actor, sequenceId);
+  requireRecord(actor.permissions, "sequences", "view", sequence, actor.userId);
+  return { repeats: await previousRuns(db, actor, sequenceId, input) };
 }
 
 export async function listEnrollments(db: Db, actor: Actor, sequenceId: string) {
