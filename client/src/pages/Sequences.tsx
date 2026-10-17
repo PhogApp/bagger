@@ -59,7 +59,8 @@ export function SequencesPage() {
       key: "name",
       header: "Name",
       sort: "name",
-      cell: (s) => <span className="font-medium">{s.name}</span>,
+      opens: true,
+      cell: (s) => s.name,
       csv: (s) => s.name,
     },
     {
